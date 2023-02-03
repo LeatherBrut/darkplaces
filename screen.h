@@ -31,11 +31,8 @@ void CL_UpdateScreen (void);
 void SCR_CenterPrint(const char *str);
 
 void SCR_BeginLoadingPlaque (qbool startup);
+void SCR_DeferLoadingPlaque (qbool startup);
 void SCR_EndLoadingPlaque (void);
-
-// invoke refresh of loading plaque (nothing else seen)
-void SCR_UpdateLoadingScreen(qbool clear, qbool startup);
-void SCR_UpdateLoadingScreenIfShown(void);
 
 // pushes an item on the loading screen
 void SCR_PushLoadingScreen (const char *msg, float len_in_parent);
@@ -44,7 +41,7 @@ void SCR_ClearLoadingScreen (qbool redraw);
 
 void SCR_CaptureVideo_SoundFrame(const struct portable_samplepair_s *paintbuffer, size_t length);
 
-extern float scr_con_current; // current height of displayed console
+extern unsigned int scr_con_current; // current height of displayed console
 
 extern int sb_lines;
 

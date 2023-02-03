@@ -333,10 +333,7 @@ void CL_KeepaliveMessage (qbool readmessages)
 		if(cls.state != ca_dedicated)
 		{
 			if(countdownupdate <= 0) // check if time stepped backwards
-			{
-				SCR_UpdateLoadingScreenIfShown();
 				countdownupdate = 2;
-			}
 		}
 	}
 
@@ -1690,8 +1687,11 @@ static void CL_ParseServerInfo (void)
 	{
 		SCR_BeginLoadingPlaque(false);
 		S_StopAllSounds();
+		// prevent dlcache assets from the previous map from interfering with this one
+		FS_UnloadPacks_dlcache();
 		// free q3 shaders so that any newly downloaded shaders will be active
-		Mod_FreeQ3Shaders();
+		// bones_was_here: we free the q3 shaders later in CL_SignonReply
+		//Mod_FreeQ3Shaders();
 	}
 
 	// check memory integrity

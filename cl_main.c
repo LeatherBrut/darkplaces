@@ -387,11 +387,13 @@ void CL_DisconnectEx(qbool kicked, const char *fmt, ... )
 
 	Con_DPrintf("CL_Disconnect\n");
 
-    Cvar_SetValueQuick(&csqc_progcrc, -1);
+	Cvar_SetValueQuick(&csqc_progcrc, -1);
 	Cvar_SetValueQuick(&csqc_progsize, -1);
 	CL_VM_ShutDown();
-// stop sounds (especially looping!)
-	S_StopAllSounds ();
+	// stop sounds (especially looping!)
+	S_StopAllSounds();
+	// prevent dlcache assets from this server from interfering with the next one
+	FS_UnloadPacks_dlcache();
 
 	cl.parsingtextexpectingpingforscores = 0; // just in case no reply has come yet
 
@@ -598,6 +600,7 @@ void CL_EstablishConnection(const char *address, int firstarg)
 #ifdef CONFIG_MENU
 		M_Update_Return_Reason("Trying to connect...");
 #endif
+		SCR_BeginLoadingPlaque(false);
 	}
 	else
 	{
@@ -2811,6 +2814,11 @@ double CL_Frame (double time)
 	SndSys_SendKeyEvents();
 	Sys_SendKeyEvents();
 
+	/*
+	 * If the accumulator hasn't become positive, don't
+	 * run the frame. Everything that happens before this
+	 * point will happen even if we're sleeping this frame.
+	 */
 	if((cl_timer += time) < 0)
 		return cl_timer;
 
@@ -3132,7 +3140,7 @@ void CL_Init (void)
 
 		CL_Video_Init();
 
-		NetConn_UpdateSockets_Client();
+		Cvar_Callback(&cl_netport);
 
 		host.hook.ConnectLocal = CL_EstablishConnection_Local;
 		host.hook.Disconnect = CL_DisconnectEx;
