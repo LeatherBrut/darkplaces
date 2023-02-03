@@ -359,11 +359,8 @@ static void sbar_newmap(void)
 
 void Sbar_Init (void)
 {
-	if(gamemode == GAME_NORMAL) // Workaround so Quake doesn't trample on Xonotic.
-	{
-		Cmd_AddCommand(CF_CLIENT, "+showscores", Sbar_ShowScores_f, "show scoreboard");
-		Cmd_AddCommand(CF_CLIENT, "-showscores", Sbar_DontShowScores_f, "hide scoreboard");
-	}
+	Cmd_AddCommand(CF_CLIENT, "+showscores", Sbar_ShowScores_f, "show scoreboard");
+	Cmd_AddCommand(CF_CLIENT, "-showscores", Sbar_DontShowScores_f, "hide scoreboard");
 	Cvar_RegisterVariable(&cl_showfps);
 	Cvar_RegisterVariable(&cl_showsound);
 	Cvar_RegisterVariable(&cl_showblur);
@@ -1217,7 +1214,7 @@ void Sbar_ShowFPS(void)
 		svtrace.fraction = 2.0;
 		cltrace.fraction = 2.0;
 		// ray hits models (even animated ones) and ignores translucent materials
-		if (SVVM_prog != NULL)
+		if (sv.active)
 			svtrace = SV_TraceLine(org, dest, MOVE_HITMODEL, NULL, SUPERCONTENTS_SOLID, 0, MATERIALFLAGMASK_TRANSLUCENT, collision_extendmovelength.value);
 		cltrace = CL_TraceLine(org, dest, MOVE_HITMODEL, NULL, SUPERCONTENTS_SOLID, 0, MATERIALFLAGMASK_TRANSLUCENT, collision_extendmovelength.value, true, false, &hitnetentity, true, true);
 		if (cltrace.hittexture)
@@ -1237,7 +1234,7 @@ void Sbar_ShowFPS(void)
 		}
 		else
 		{
-			if (CLVM_prog != NULL && cltrace.ent != NULL)
+			if (cltrace.ent != NULL)
 			{
 				prvm_prog_t *prog = CLVM_prog;
 				dpsnprintf(entstring, sizeof(entstring), "client entity %i", (int)PRVM_EDICT_TO_PROG(cltrace.ent));

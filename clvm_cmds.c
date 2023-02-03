@@ -547,7 +547,12 @@ static void VM_CL_droptofloor (prvm_prog_t *prog)
 	VectorCopy(PRVM_clientedictvector(ent, mins), mins);
 	VectorCopy(PRVM_clientedictvector(ent, maxs), maxs);
 	VectorCopy(PRVM_clientedictvector(ent, origin), end);
-	end[2] -= 256;
+	if (cl.worldmodel->brush.isq3bsp)
+		end[2] -= 4096;
+	else if (cl.worldmodel->brush.isq2bsp)
+		end[2] -= 128;
+	else
+		end[2] -= 256; // Quake, QuakeWorld
 
 	trace = CL_TraceBox(start, mins, maxs, end, MOVE_NORMAL, ent, CL_GenericHitSuperContentsMask(ent), 0, 0, collision_extendmovelength.value, true, true, NULL, true);
 
@@ -2402,8 +2407,7 @@ static void VM_CL_setlistener (prvm_prog_t *prog)
 static void VM_CL_registercmd (prvm_prog_t *prog)
 {
 	VM_SAFEPARMCOUNT(1, VM_CL_registercmd);
-	if(!Cmd_Exists(cmd_local, PRVM_G_STRING(OFS_PARM0)))
-		Cmd_AddCommand(CF_CLIENT, PRVM_G_STRING(OFS_PARM0), NULL, "console command created by QuakeC");
+	Cmd_AddCommand(CF_CLIENT, PRVM_G_STRING(OFS_PARM0), NULL, "console command created by QuakeC");
 }
 
 //#360 float() readbyte (EXT_CSQC)

@@ -1158,7 +1158,12 @@ static void VM_SV_droptofloor(prvm_prog_t *prog)
 	}
 
 	VectorCopy (PRVM_serveredictvector(ent, origin), end);
-	end[2] -= 256;
+	if (sv.worldmodel->brush.isq3bsp)
+		end[2] -= 4096;
+	else if (sv.worldmodel->brush.isq2bsp)
+		end[2] -= 128;
+	else
+		end[2] -= 256; // Quake, QuakeWorld
 
 	if (sv_gameplayfix_droptofloorstartsolid_nudgetocorrect.integer)
 		SV_NudgeOutOfSolid(ent);
@@ -2860,8 +2865,7 @@ qbool SV_VM_ConsoleCommand (const char *text)
 static void VM_SV_registercommand (prvm_prog_t *prog)
 {
 	VM_SAFEPARMCOUNT(1, VM_SV_registercmd);
-	if(!Cmd_Exists(cmd_local, PRVM_G_STRING(OFS_PARM0)))
-		Cmd_AddCommand(CF_SERVER, PRVM_G_STRING(OFS_PARM0), NULL, "console command created by QuakeC");
+	Cmd_AddCommand(CF_SERVER, PRVM_G_STRING(OFS_PARM0), NULL, "console command created by QuakeC");
 }
 
 //PF_setpause,    // void(float pause) setpause	= #531;
