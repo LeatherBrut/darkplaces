@@ -243,4 +243,3 @@ int R_PicmipForFlags(int flags);
 void R_TextureStats_Print(qbool printeach, qbool printpool, qbool printtotal);
 
 #endif
-

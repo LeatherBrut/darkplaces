@@ -311,6 +311,7 @@
     <ClCompile Include="vid_sdl.c" />
     <ClCompile Include="vid_shared.c" />
     <ClCompile Include="view.c" />
+    <ClCompile Include="vtf.c" />
     <ClCompile Include="wad.c" />
     <ClCompile Include="world.c" />
     <ClCompile Include="zone.c" />
@@ -430,6 +431,7 @@
     <ClInclude Include="vid.h" />
     <ClInclude Include="view.h" />
     <ClInclude Include="convex.h" />
+    <ClInclude Include="vtf.h" />
     <ClInclude Include="wad.h" />
     <ClInclude Include="world.h" />
     <ClInclude Include="zone.h" />
