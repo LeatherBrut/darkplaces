@@ -34,20 +34,6 @@ typedef struct server_static_s
 	qbool changelevel_issued;
 	/// server infostring
 	char serverinfo[MAX_SERVERINFO_STRING];
-	// performance data
-	float perf_cpuload;
-	float perf_lost;
-	float perf_offset_avg;
-	float perf_offset_max;
-	float perf_offset_sdev;
-	// temporary performance data accumulators
-	float perf_acc_realtime;
-	float perf_acc_sleeptime;
-	float perf_acc_lost;
-	float perf_acc_offset;
-	float perf_acc_offset_squared;
-	float perf_acc_offset_max;
-	int perf_acc_offset_samples;
 
 	// csqc stuff
 	unsigned char *csqc_progdata;
@@ -88,8 +74,24 @@ typedef struct server_s
 	protocolversion_t protocol;
 
 	double time;
-
 	double frametime;
+
+	unsigned int spawnframe; // signals SV_Frame() to reset its timers
+
+	// performance data
+	float perf_cpuload;
+	float perf_lost;
+	float perf_offset_avg;
+	float perf_offset_max;
+	float perf_offset_sdev;
+	// temporary performance data accumulators
+	float perf_acc_realtime;
+	float perf_acc_sleeptime;
+	float perf_acc_lost;
+	float perf_acc_offset;
+	float perf_acc_offset_squared;
+	float perf_acc_offset_max;
+	int perf_acc_offset_samples;
 
 	// used by PF_checkclient
 	int lastcheck;
@@ -415,6 +417,7 @@ extern cvar_t sv_allowdownloads_archive;
 extern cvar_t sv_allowdownloads_config;
 extern cvar_t sv_allowdownloads_dlcache;
 extern cvar_t sv_allowdownloads_inarchive;
+extern cvar_t sv_areagrid_link_SOLID_NOT;
 extern cvar_t sv_areagrid_mingridsize;
 extern cvar_t sv_checkforpacketsduringsleep;
 extern cvar_t sv_clmovement_enable;
@@ -567,10 +570,6 @@ void SV_LinkEdict_TouchAreaGrid_Call(prvm_edict_t *touch, prvm_edict_t *ent); //
  * returns true if it found a better place
  */
 qbool SV_UnstickEntity (prvm_edict_t *ent);
-/*! move an entity that is stuck out of the surface it is stuck in (can move large amounts)
- * returns true if it found a better place
- */
-qbool SV_NudgeOutOfSolid(prvm_edict_t *ent);
 
 /// calculates hitsupercontentsmask for a generic qc entity
 int SV_GenericHitSuperContentsMask(const prvm_edict_t *edict);

@@ -42,7 +42,6 @@ host_static_t host;
 
 // pretend frames take this amount of time (in seconds), 0 = realtime
 cvar_t host_framerate = {CF_CLIENT | CF_SERVER, "host_framerate","0", "locks frame timing to this value in seconds, 0.05 is 20fps for example, note that this can easily run too fast, use cl_maxfps if you want to limit your framerate instead, or sys_ticrate to limit server speed"};
-cvar_t cl_maxphysicsframesperserverframe = {CF_CLIENT, "cl_maxphysicsframesperserverframe","10", "maximum number of physics frames per server frame"};
 // shows time used by certain subsystems
 cvar_t host_speeds = {CF_CLIENT | CF_SERVER, "host_speeds","0", "reports how much time is used in server/graphics/sound"};
 cvar_t host_maxwait = {CF_CLIENT | CF_SERVER, "host_maxwait","1000", "maximum sleep time requested from the operating system in millisecond. Larger sleeps will be done using multiple host_maxwait length sleeps. Lowering this value will increase CPU load, but may help working around problems with accuracy of sleep times."};
@@ -270,7 +269,6 @@ static void Host_InitLocal (void)
 	Cmd_AddCommand(CF_SHARED, "saveconfig", Host_SaveConfig_f, "save settings to config.cfg (or a specified filename) immediately (also automatic when quitting)");
 	Cmd_AddCommand(CF_SHARED, "loadconfig", Host_LoadConfig_f, "reset everything and reload configs");
 	Cmd_AddCommand(CF_SHARED, "sendcvar", SendCvar_f, "sends the value of a cvar to the server as a sentcvar command, for use by QuakeC");
-	Cvar_RegisterVariable (&cl_maxphysicsframesperserverframe);
 	Cvar_RegisterVariable (&host_framerate);
 	Cvar_RegisterCallback (&host_framerate, Host_Framerate_c);
 	Cvar_RegisterVariable (&host_speeds);
@@ -424,6 +422,10 @@ static void Host_Init (void)
 	if (Sys_CheckParm("-nostdout"))
 		sys_nostdout = 1;
 
+	// -dedicated is checked in SV_ServerOptions() but that's too late for Cvar_RegisterVariable() to skip all the client-only cvars
+	if (Sys_CheckParm ("-dedicated") || !cl_available)
+		cls.state = ca_dedicated;
+
 	// initialize console command/cvar/alias/command execution systems
 	Cmd_Init();
 
@@ -497,12 +499,15 @@ static void Host_Init (void)
 
 	Log_Start();
 
-	// put up the loading image so the user doesn't stare at a black screen...
-	SCR_BeginLoadingPlaque(true);
-#ifdef CONFIG_MENU
 	if (cls.state != ca_dedicated)
+	{
+		// put up the loading image so the user doesn't stare at a black screen...
+		SCR_BeginLoadingPlaque(true);
+#ifdef CONFIG_MENU
 		MR_Init();
 #endif
+	}
+
 	// check for special benchmark mode
 // COMMANDLINEOPTION: Client: -benchmark <demoname> runs a timedemo and quits, results of any timedemo can be found in gamedir/benchmark.log (for example id1/benchmark.log)
 	i = Sys_CheckParm("-benchmark");
@@ -643,35 +648,34 @@ static double Host_Frame(double time)
 
 	R_TimeReport("---");
 
-	sv_wait = SV_Frame(time);
-	cl_wait = CL_Frame(time);
-
-//	Con_Printf("%6.0f %6.0f\n", cl_wait * 1000000.0, sv_wait * 1000000.0);
+	// if the accumulators haven't become positive yet, wait a while
+	sv_wait = - SV_Frame(time);
+	cl_wait = - CL_Frame(time);
 
 	Mem_CheckSentinelsGlobal();
 
-	if(host.restless)
-		return 0;
-
-	// if the accumulators haven't become positive yet, wait a while
 	if (cls.state == ca_dedicated)
-		return sv_wait * -1000000.0; // dedicated
+		return sv_wait; // dedicated
 	else if (!sv.active || svs.threaded)
-		return cl_wait * -1000000.0; // connected to server, main menu, or server is on different thread
+		return cl_wait; // connected to server, main menu, or server is on different thread
 	else
-		return max(cl_wait, sv_wait) * -1000000.0; // listen server or singleplayer
+		return min(cl_wait, sv_wait); // listen server or singleplayer
 }
 
-static inline void Host_Sleep(double time)
+static inline double Host_Sleep(double time)
 {
 	double delta, time0;
+
+	// convert to microseconds
+	time *= 1000000.0;
+
+	if (time < 1 || host.restless)
+		return 0; // not sleeping this frame
 
 	if(host_maxwait.value <= 0)
 		time = min(time, 1000000.0);
 	else
 		time = min(time, host_maxwait.value * 1000.0);
-	if(time < 1)
-		time = 1; // because we cast to int
 
 	time0 = Sys_DirtyTime();
 	if (sv_checkforpacketsduringsleep.integer && !sys_usenoclockbutbenchmark.integer && !svs.threaded) {
@@ -686,12 +690,13 @@ static inline void Host_Sleep(double time)
 			Curl_Select(&time);
 		Sys_Sleep((int)time);
 	}
+
 	delta = Sys_DirtyTime() - time0;
 	if (delta < 0 || delta >= 1800)
 		delta = 0;
-	host.sleeptime += delta;
-//			R_TimeReport("sleep");
-	return;
+
+//	R_TimeReport("sleep");
+	return delta;
 }
 
 // Cloudwalk: Most overpowered function declaration...
@@ -717,7 +722,7 @@ static inline double Host_UpdateTime (double newtime, double oldtime)
 
 void Host_Main(void)
 {
-	double time, newtime, oldtime, sleeptime;
+	double time, oldtime, sleeptime;
 
 	Host_Init(); // Start!
 
@@ -734,19 +739,15 @@ void Host_Main(void)
 			continue;
 		}
 
-		newtime = host.dirtytime = Sys_DirtyTime();
-		host.realtime += time = Host_UpdateTime(newtime, oldtime);
+		host.dirtytime = Sys_DirtyTime();
+		host.realtime += time = Host_UpdateTime(host.dirtytime, oldtime);
 
 		sleeptime = Host_Frame(time);
-		oldtime = newtime;
+		oldtime = host.dirtytime;
+		++host.framecount;
 
-		if (sleeptime >= 1)
-		{
-			Host_Sleep(sleeptime);
-			continue;
-		}
-
-		host.framecount++;
+		sleeptime -= Sys_DirtyTime() - host.dirtytime; // execution time
+		host.sleeptime = Host_Sleep(sleeptime);
 	}
 
 	return;

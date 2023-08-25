@@ -72,6 +72,7 @@ cvar_t sv_allowdownloads_archive = {CF_SERVER, "sv_allowdownloads_archive", "0",
 cvar_t sv_allowdownloads_config = {CF_SERVER, "sv_allowdownloads_config", "0", "whether to allow downloads of config files (cfg)"};
 cvar_t sv_allowdownloads_dlcache = {CF_SERVER, "sv_allowdownloads_dlcache", "0", "whether to allow downloads of dlcache files (dlcache/)"};
 cvar_t sv_allowdownloads_inarchive = {CF_SERVER, "sv_allowdownloads_inarchive", "0", "whether to allow downloads from archives (pak/pk3)"};
+cvar_t sv_areagrid_link_SOLID_NOT = {CF_SERVER | CF_NOTIFY, "sv_areagrid_link_SOLID_NOT", "1", "set to 0 to prevent SOLID_NOT entities from being linked to the area grid, and unlink any that are already linked (in the code paths that would otherwise link them), for better performance"};
 cvar_t sv_areagrid_mingridsize = {CF_SERVER | CF_NOTIFY, "sv_areagrid_mingridsize", "128", "minimum areagrid cell size, smaller values work better for lots of small objects, higher values for large objects"};
 cvar_t sv_checkforpacketsduringsleep = {CF_SERVER, "sv_checkforpacketsduringsleep", "0", "uses select() function to wait between frames which can be interrupted by packets being received, instead of Sleep()/usleep()/SDL_Sleep() functions which do not check for packets"};
 cvar_t sv_clmovement_enable = {CF_SERVER, "sv_clmovement_enable", "1", "whether to allow clients to use cl_movement prediction, which can cause choppy movement on the server which may annoy other players"};
@@ -159,10 +160,15 @@ cvar_t sv_warsowbunny_turnaccel = {CF_SERVER, "sv_warsowbunny_turnaccel", "0", "
 cvar_t sv_warsowbunny_backtosideratio = {CF_SERVER, "sv_warsowbunny_backtosideratio", "0.8", "lower values make it easier to change direction without losing speed; the drawback is \"understeering\" in sharp turns"};
 cvar_t sv_onlycsqcnetworking = {CF_SERVER, "sv_onlycsqcnetworking", "0", "disables legacy entity networking code for higher performance (except on clients, which can still be legacy)"};
 cvar_t sv_areadebug = {CF_SERVER, "sv_areadebug", "0", "disables physics culling for debugging purposes (only for development)"};
+
 cvar_t sys_ticrate = {CF_SERVER | CF_ARCHIVE, "sys_ticrate","0.0138889", "how long a server frame is in seconds, 0.05 is 20fps server rate, 0.1 is 10fps (can not be set higher than 0.1), 0 runs as many server frames as possible (makes games against bots a little smoother, overwhelms network players), 0.0138889 matches QuakeWorld physics"};
+cvar_t sv_maxphysicsframesperserverframe = {CF_SERVER, "sv_maxphysicsframesperserverframe","10", "maximum number of physics frames per server frame"};
+cvar_t sv_lagreporting_always = {CF_SERVER, "sv_lagreporting_always", "0", "report lag even in singleplayer, listen, or an empty dedicated server"};
+cvar_t sv_lagreporting_strict = {CF_SERVER, "sv_lagreporting_strict", "0", "log any extra frames run to catch up after a holdup (only applies when sv_maxphysicsframesperserverframe > 1)"};
+cvar_t sv_threaded = {CF_SERVER, "sv_threaded", "0", "enables a separate thread for server code, improving performance, especially when hosting a game while playing, EXPERIMENTAL, may be crashy"};
+
 cvar_t teamplay = {CF_SERVER | CF_NOTIFY, "teamplay","0", "teamplay mode, values depend on mod but typically 0 = no teams, 1 = no team damage no self damage, 2 = team damage and self damage, some mods support 3 = no team damage but can damage self"};
 cvar_t timelimit = {CF_SERVER | CF_NOTIFY, "timelimit","0", "ends level at this time (in minutes)"};
-cvar_t sv_threaded = {CF_SERVER, "sv_threaded", "0", "enables a separate thread for server code, improving performance, especially when hosting a game while playing, EXPERIMENTAL, may be crashy"};
 
 cvar_t sv_rollspeed = {CF_CLIENT, "sv_rollspeed", "200", "how much strafing is necessary to tilt the view"};
 cvar_t sv_rollangle = {CF_CLIENT, "sv_rollangle", "2.0", "how much to tilt the view when strafing"};
@@ -451,7 +457,6 @@ static void SV_ServerOptions (void)
 	i = Sys_CheckParm ("-dedicated");
 	if (i || !cl_available)
 	{
-		cls.state = ca_dedicated;
 		// check for -dedicated specifying how many players
 		if (i && i + 1 < sys.argc && atoi (sys.argv[i+1]) >= 1)
 			svs.maxclients = atoi (sys.argv[i+1]);
@@ -551,6 +556,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_allowdownloads_config);
 	Cvar_RegisterVariable (&sv_allowdownloads_dlcache);
 	Cvar_RegisterVariable (&sv_allowdownloads_inarchive);
+	Cvar_RegisterVariable (&sv_areagrid_link_SOLID_NOT);
 	Cvar_RegisterVariable (&sv_areagrid_mingridsize);
 	Cvar_RegisterVariable (&sv_checkforpacketsduringsleep);
 	Cvar_RegisterVariable (&sv_clmovement_enable);
@@ -639,10 +645,15 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_warsowbunny_backtosideratio);
 	Cvar_RegisterVariable (&sv_onlycsqcnetworking);
 	Cvar_RegisterVariable (&sv_areadebug);
+
 	Cvar_RegisterVariable (&sys_ticrate);
+	Cvar_RegisterVariable (&sv_maxphysicsframesperserverframe);
+	Cvar_RegisterVariable (&sv_lagreporting_always);
+	Cvar_RegisterVariable (&sv_lagreporting_strict);
+	Cvar_RegisterVariable (&sv_threaded);
+
 	Cvar_RegisterVariable (&teamplay);
 	Cvar_RegisterVariable (&timelimit);
-	Cvar_RegisterVariable (&sv_threaded);
 
 	Cvar_RegisterVariable (&sv_rollangle);
 	Cvar_RegisterVariable (&sv_rollspeed);
@@ -1888,6 +1899,10 @@ void SV_SpawnServer (const char *map)
 // set up the new server
 //
 	memset (&sv, 0, sizeof(sv));
+
+	// tell SV_Frame() to reset its timers
+	sv.spawnframe = host.framecount;
+
 	// if running a local client, make sure it doesn't try to access the last
 	// level's data which is no longer valiud
 	cls.signon = 0;
@@ -2155,7 +2170,7 @@ static void SVVM_end_increase_edicts(prvm_prog_t *prog)
 
 	// link every entity except world
 	for (i = 1, ent = prog->edicts;i < prog->num_edicts;i++, ent++)
-		if (!ent->free && !VectorCompare(PRVM_serveredictvector(ent, absmin), PRVM_serveredictvector(ent, absmax)))
+		if (!ent->free)
 			SV_LinkEdict(ent);
 }
 
@@ -2501,55 +2516,61 @@ Returns a time report string, for example for
 */
 const char *SV_TimingReport(char *buf, size_t buflen)
 {
-	return va(buf, buflen, "%.1f%% CPU, %.2f%% lost, offset avg %.1fms, max %.1fms, sdev %.1fms", svs.perf_cpuload * 100, svs.perf_lost * 100, svs.perf_offset_avg * 1000, svs.perf_offset_max * 1000, svs.perf_offset_sdev * 1000);
+	return va(buf, buflen, "%.1f%% CPU, %.2f%% lost, offset avg %.1fms, max %.1fms, sdev %.1fms", sv.perf_cpuload * 100, sv.perf_lost * 100, sv.perf_offset_avg * 1000, sv.perf_offset_max * 1000, sv.perf_offset_sdev * 1000);
 }
 
 extern cvar_t host_maxwait;
 extern cvar_t host_framerate;
-extern cvar_t cl_maxphysicsframesperserverframe;
 double SV_Frame(double time)
 {
 	static double sv_timer;
 	int i;
 	char vabuf[1024];
-	qbool playing = false;
+	qbool reporting = false;
+
+	// reset timer after level change
+	if (host.framecount == sv.spawnframe || host.framecount == sv.spawnframe + 1)
+		sv_timer = time = host.sleeptime = 0;
 
 	if (!svs.threaded)
 	{
-		svs.perf_acc_sleeptime = host.sleeptime;
-		svs.perf_acc_realtime += time;
+		sv.perf_acc_sleeptime += host.sleeptime;
+		sv.perf_acc_realtime += time;
 
-		// Look for clients who have spawned
-		for (i = 0, host_client = svs.clients; i < svs.maxclients; i++, host_client++)
-			if(host_client->begun && host_client->netconnection)
-				playing = true;
-
-		if(svs.perf_acc_realtime > 5)
+		if (sv_lagreporting_always.integer)
+			reporting = true;
+		else if (cls.state == ca_dedicated)
 		{
-			svs.perf_cpuload = 1 - svs.perf_acc_sleeptime / svs.perf_acc_realtime;
-			svs.perf_lost = svs.perf_acc_lost / svs.perf_acc_realtime;
-
-			if(svs.perf_acc_offset_samples > 0)
+			// Report lag if there's players, so they know it wasn't the network or their machine
+			for (i = 0; i < svs.maxclients; ++i)
 			{
-				svs.perf_offset_max = svs.perf_acc_offset_max;
-				svs.perf_offset_avg = svs.perf_acc_offset / svs.perf_acc_offset_samples;
-				svs.perf_offset_sdev = sqrt(svs.perf_acc_offset_squared / svs.perf_acc_offset_samples - svs.perf_offset_avg * svs.perf_offset_avg);
+				if (svs.clients[i].begun && svs.clients[i].netconnection)
+				{
+					reporting = true;
+					break;
+				}
 			}
-
-			if(svs.perf_lost > 0 && developer_extra.integer && playing) // only complain if anyone is looking
-				Con_DPrintf("Server can't keep up: %s\n", SV_TimingReport(vabuf, sizeof(vabuf)));
 		}
 
-		if(svs.perf_acc_realtime > 5 || sv.time < 10)
+		if(sv.perf_acc_realtime > 5)
 		{
-			/*
-			 * Don't accumulate time for the first 10 seconds of a match
-			 * so things can settle
-			 */
-			svs.perf_acc_realtime = svs.perf_acc_sleeptime =
-			svs.perf_acc_lost = svs.perf_acc_offset =
-			svs.perf_acc_offset_squared = svs.perf_acc_offset_max =
-			svs.perf_acc_offset_samples = host.sleeptime = 0;
+			sv.perf_cpuload = 1 - sv.perf_acc_sleeptime / sv.perf_acc_realtime;
+			sv.perf_lost = sv.perf_acc_lost / sv.perf_acc_realtime;
+
+			if(sv.perf_acc_offset_samples > 0)
+			{
+				sv.perf_offset_max = sv.perf_acc_offset_max;
+				sv.perf_offset_avg = sv.perf_acc_offset / sv.perf_acc_offset_samples;
+				sv.perf_offset_sdev = sqrt(sv.perf_acc_offset_squared / sv.perf_acc_offset_samples - sv.perf_offset_avg * sv.perf_offset_avg);
+			}
+
+			if (sv.perf_lost > 0 && reporting)
+				SV_BroadcastPrintf("\003" CON_WARN "Server lag report: %s\n", SV_TimingReport(vabuf, sizeof(vabuf)));
+
+			sv.perf_acc_realtime = sv.perf_acc_sleeptime =
+			sv.perf_acc_lost = sv.perf_acc_offset =
+			sv.perf_acc_offset_squared = sv.perf_acc_offset_max =
+			sv.perf_acc_offset_samples = 0;
 		}
 
 		/*
@@ -2575,7 +2596,7 @@ double SV_Frame(double time)
 	if (sv_timer > 0.1)
 	{
 		if (!svs.threaded)
-			svs.perf_acc_lost += (sv_timer - 0.1);
+			sv.perf_acc_lost += (sv_timer - 0.1);
 		sv_timer = 0.1;
 	}
 
@@ -2602,7 +2623,8 @@ double SV_Frame(double time)
 		{
 			advancetime = sys_ticrate.value;
 			// listen servers can run multiple server frames per client frame
-			framelimit = cl_maxphysicsframesperserverframe.integer;
+			if (sv_maxphysicsframesperserverframe.integer > 0)
+				framelimit = sv_maxphysicsframesperserverframe.integer;
 			aborttime = Sys_DirtyTime() + 0.1;
 		}
 
@@ -2618,12 +2640,12 @@ double SV_Frame(double time)
 				offset = 0;
 
 			offset += sv_timer;
-			++svs.perf_acc_offset_samples;
-			svs.perf_acc_offset += offset;
-			svs.perf_acc_offset_squared += offset * offset;
+			++sv.perf_acc_offset_samples;
+			sv.perf_acc_offset += offset;
+			sv.perf_acc_offset_squared += offset * offset;
 			
-			if(svs.perf_acc_offset_max < offset)
-				svs.perf_acc_offset_max = offset;
+			if(sv.perf_acc_offset_max < offset)
+				sv.perf_acc_offset_max = offset;
 		}
 
 		// only advance time if not paused
@@ -2646,6 +2668,9 @@ double SV_Frame(double time)
 			if (framelimit > 1 && Sys_DirtyTime() >= aborttime)
 				break;
 		}
+
+		if (framecount > 1 && sv_lagreporting_strict.integer && reporting)
+			SV_BroadcastPrintf(CON_WARN "Server lag report: caught up %.1fms by running %d extra frames\n", advancetime * (framecount - 1) * 1000, framecount - 1);
 
 		R_TimeReport("serverphysics");
 
@@ -2673,7 +2698,7 @@ double SV_Frame(double time)
 	if (sv_timer >= 0)
 	{
 		if (!svs.threaded)
-			svs.perf_acc_lost += sv_timer;
+			sv.perf_acc_lost += sv_timer;
 		sv_timer = 0;
 	}
 
@@ -2703,7 +2728,7 @@ static int SV_ThreadFunc(void *voiddata)
 
 		sv_timer += sv_deltarealtime;
 
-		svs.perf_acc_realtime += sv_deltarealtime;
+		sv.perf_acc_realtime += sv_deltarealtime;
 
 		// at this point we start doing real server work, and must block on any client activity pertaining to the server (such as executing SV_SpawnServer)
 		SV_LockThreadMutex();
@@ -2719,22 +2744,22 @@ static int SV_ThreadFunc(void *voiddata)
 		{
 			// don't accumulate time for the first 10 seconds of a match
 			// so things can settle
-			svs.perf_acc_realtime = svs.perf_acc_sleeptime = svs.perf_acc_lost = svs.perf_acc_offset = svs.perf_acc_offset_squared = svs.perf_acc_offset_max = svs.perf_acc_offset_samples = 0;
+			sv.perf_acc_realtime = sv.perf_acc_sleeptime = sv.perf_acc_lost = sv.perf_acc_offset = sv.perf_acc_offset_squared = sv.perf_acc_offset_max = sv.perf_acc_offset_samples = 0;
 		}
-		else if(svs.perf_acc_realtime > 5)
+		else if(sv.perf_acc_realtime > 5)
 		{
-			svs.perf_cpuload = 1 - svs.perf_acc_sleeptime / svs.perf_acc_realtime;
-			svs.perf_lost = svs.perf_acc_lost / svs.perf_acc_realtime;
-			if(svs.perf_acc_offset_samples > 0)
+			sv.perf_cpuload = 1 - sv.perf_acc_sleeptime / sv.perf_acc_realtime;
+			sv.perf_lost = sv.perf_acc_lost / sv.perf_acc_realtime;
+			if(sv.perf_acc_offset_samples > 0)
 			{
-				svs.perf_offset_max = svs.perf_acc_offset_max;
-				svs.perf_offset_avg = svs.perf_acc_offset / svs.perf_acc_offset_samples;
-				svs.perf_offset_sdev = sqrt(svs.perf_acc_offset_squared / svs.perf_acc_offset_samples - svs.perf_offset_avg * svs.perf_offset_avg);
+				sv.perf_offset_max = sv.perf_acc_offset_max;
+				sv.perf_offset_avg = sv.perf_acc_offset / sv.perf_acc_offset_samples;
+				sv.perf_offset_sdev = sqrt(sv.perf_acc_offset_squared / sv.perf_acc_offset_samples - sv.perf_offset_avg * sv.perf_offset_avg);
 			}
-			if(svs.perf_lost > 0 && developer_extra.integer)
+			if(sv.perf_lost > 0 && developer_extra.integer)
 				if(playing)
 					Con_DPrintf("Server can't keep up: %s\n", SV_TimingReport(vabuf, sizeof(vabuf)));
-			svs.perf_acc_realtime = svs.perf_acc_sleeptime = svs.perf_acc_lost = svs.perf_acc_offset = svs.perf_acc_offset_squared = svs.perf_acc_offset_max = svs.perf_acc_offset_samples = 0;
+			sv.perf_acc_realtime = sv.perf_acc_sleeptime = sv.perf_acc_lost = sv.perf_acc_offset = sv.perf_acc_offset_squared = sv.perf_acc_offset_max = sv.perf_acc_offset_samples = 0;
 		}
 
 		// get new packets
@@ -2759,7 +2784,7 @@ static int SV_ThreadFunc(void *voiddata)
 			time0 = Sys_DirtyTime();
 			Sys_Sleep((int)wait);
 			delta = Sys_DirtyTime() - time0;if (delta < 0 || delta >= 1800) delta = 0;
-			svs.perf_acc_sleeptime += delta;
+			sv.perf_acc_sleeptime += delta;
 			continue;
 		}
 
@@ -2777,11 +2802,11 @@ static int SV_ThreadFunc(void *voiddata)
 			if(advancetime > 0)
 			{
 				offset = sv_timer + (Sys_DirtyTime() - sv_realtime); // LadyHavoc: FIXME: I don't understand this line
-				++svs.perf_acc_offset_samples;
-				svs.perf_acc_offset += offset;
-				svs.perf_acc_offset_squared += offset * offset;
-				if(svs.perf_acc_offset_max < offset)
-					svs.perf_acc_offset_max = offset;
+				++sv.perf_acc_offset_samples;
+				sv.perf_acc_offset += offset;
+				sv.perf_acc_offset_squared += offset * offset;
+				if(sv.perf_acc_offset_max < offset)
+					sv.perf_acc_offset_max = offset;
 			}
 
 			// only advance time if not paused
@@ -2819,7 +2844,7 @@ static int SV_ThreadFunc(void *voiddata)
 		// if there is some time remaining from this frame, reset the timers
 		if (sv_timer >= 0)
 		{
-			svs.perf_acc_lost += sv_timer;
+			sv.perf_acc_lost += sv_timer;
 			sv_timer = 0;
 		}
 	}

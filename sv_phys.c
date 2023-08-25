@@ -409,7 +409,7 @@ SV_Move
 ==================
 */
 #if COLLISIONPARANOID >= 1
-trace_t SV_TraceBox_(const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int type, prvm_edict_t *passedict, int hitsupercontentsmask, int skipsupercontentsmask, int skipmaterialflagsmask, float extend)
+static trace_t SV_TraceBox_(const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int type, prvm_edict_t *passedict, int hitsupercontentsmask, int skipsupercontentsmask, int skipmaterialflagsmask, float extend)
 #else
 trace_t SV_TraceBox(const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int type, prvm_edict_t *passedict, int hitsupercontentsmask, int skipsupercontentsmask, int skipmaterialflagsmask, float extend)
 #endif
@@ -588,17 +588,17 @@ finished:
 }
 
 #if COLLISIONPARANOID >= 1
-trace_t SV_TraceBox(const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int type, prvm_edict_t *passedict, int hitsupercontentsmask, int skipsupercontentsmask, int skipmaterialflagsmask)
+trace_t SV_TraceBox(const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int type, prvm_edict_t *passedict, int hitsupercontentsmask, int skipsupercontentsmask, int skipmaterialflagsmask, float extend)
 {
 	prvm_prog_t *prog = SVVM_prog;
 	int endstuck;
 	trace_t trace;
 	vec3_t temp;
-	trace = SV_TraceBox_(start, mins, maxs, end, type, passedict, hitsupercontentsmask, skipsupercontentsmask, skipmaterialflagsmask);
+	trace = SV_TraceBox_(start, mins, maxs, end, type, passedict, hitsupercontentsmask, skipsupercontentsmask, skipmaterialflagsmask, extend);
 	if (passedict)
 	{
 		VectorCopy(trace.endpos, temp);
-		endstuck = SV_TraceBox_(temp, mins, maxs, temp, type, passedict, hitsupercontentsmask, skipsupercontentsmask, skipmaterialflagsmask).startsolid;
+		endstuck = SV_TraceBox_(temp, mins, maxs, temp, type, passedict, hitsupercontentsmask, skipsupercontentsmask, skipmaterialflagsmask, extend).startsolid;
 #if COLLISIONPARANOID < 3
 		if (trace.startsolid || endstuck)
 #endif
@@ -904,7 +904,7 @@ void SV_LinkEdict (prvm_edict_t *ent)
 	VectorCopy(mins, PRVM_serveredictvector(ent, absmin));
 	VectorCopy(maxs, PRVM_serveredictvector(ent, absmax));
 
-	World_LinkEdict(&sv.world, ent, mins, maxs);
+	World_LinkEdict(&sv.world, ent, mins, maxs, sv_areagrid_link_SOLID_NOT.integer);
 }
 
 /*
@@ -1543,46 +1543,6 @@ static qbool SV_NudgeOutOfSolid_PivotIsKnownGood(prvm_edict_t *ent, vec3_t pivot
 	return true;
 }
 
-qbool SV_NudgeOutOfSolid(prvm_edict_t *ent)
-{
-	prvm_prog_t *prog = SVVM_prog;
-	int bump, pass;
-	trace_t stucktrace;
-	vec3_t stuckorigin;
-	vec3_t stuckmins, stuckmaxs;
-	vec_t nudge;
-	vec_t separation = sv_gameplayfix_nudgeoutofsolid_separation.value;
-	if (sv.worldmodel && sv.worldmodel->brushq1.numclipnodes)
-		separation = 0.0f; // when using hulls, it can not be enlarged
-	VectorCopy(PRVM_serveredictvector(ent, mins), stuckmins);
-	VectorCopy(PRVM_serveredictvector(ent, maxs), stuckmaxs);
-	stuckmins[0] -= separation;
-	stuckmins[1] -= separation;
-	stuckmins[2] -= separation;
-	stuckmaxs[0] += separation;
-	stuckmaxs[1] += separation;
-	stuckmaxs[2] += separation;
-	// first pass we try to get it out of brush entities
-	// second pass we try to get it out of world only (can't win them all)
-	for (pass = 0;pass < 2;pass++)
-	{
-		VectorCopy(PRVM_serveredictvector(ent, origin), stuckorigin);
-		for (bump = 0;bump < 10;bump++)
-		{
-			stucktrace = SV_TraceBox(stuckorigin, stuckmins, stuckmaxs, stuckorigin, pass ? MOVE_WORLDONLY : MOVE_NOMONSTERS, ent, SV_GenericHitSuperContentsMask(ent), 0, 0, collision_extendmovelength.value);
-			if (!stucktrace.bmodelstartsolid || stucktrace.startdepth >= 0)
-			{
-				// found a good location, use it
-				VectorCopy(stuckorigin, PRVM_serveredictvector(ent, origin));
-				return true;
-			}
-			nudge = -stucktrace.startdepth;
-			VectorMA(stuckorigin, nudge, stucktrace.startdepthnormal, stuckorigin);
-		}
-	}
-	return false;
-}
-
 /*
 ============
 SV_PushEntity
@@ -1610,7 +1570,7 @@ static qbool SV_PushEntity (trace_t *trace, prvm_edict_t *ent, vec3_t push, qboo
 	// move start position out of solids
 	if (sv_gameplayfix_nudgeoutofsolid.integer && sv_gameplayfix_nudgeoutofsolid_separation.value >= 0)
 	{
-		SV_NudgeOutOfSolid(ent);
+		PHYS_NudgeOutOfSolid(prog, ent);
 	}
 
 	VectorCopy(PRVM_serveredictvector(ent, origin), start);

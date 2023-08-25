@@ -32,7 +32,7 @@ void VM_Warning(prvm_prog_t *prog, const char *fmt, ...)
 	dpvsnprintf(msg,sizeof(msg),fmt,argptr);
 	va_end(argptr);
 
-	Con_Printf(CON_WARN "%s", msg);
+	Con_Printf(CON_WARN "%s VM warning: %s", prog->name, msg);
 
 	// TODO: either add a cvar/cmd to control the state dumping or replace some of the calls with Con_Printf [9/13/2006 Black]
 	if(prvm_backtraceforwarnings.integer && recursive != host.realtime) // NOTE: this compares to the time, just in case if PRVM_PrintState causes a Host_Error and keeps recursive set
@@ -321,6 +321,10 @@ static qbool checkextension(prvm_prog_t *prog, const char *name)
 			if (!strcasecmp("DP_QC_DIGEST_SHA256", name))
 				return Crypto_Available();
 
+			// special shreck for libcurl
+			if (!strcasecmp("DP_QC_URI_GET", name) || !strcasecmp("DP_QC_URI_POST", name))
+				return Curl_Available();
+
 			return true;
 		}
 	}
@@ -570,7 +574,7 @@ void VM_vectoangles(prvm_prog_t *prog)
 =================
 VM_random
 
-Returns a number from 0<= num < 1
+Returns a random number > 0 and < 1
 
 float random()
 =================
@@ -1214,7 +1218,7 @@ void VM_findchainfloat(prvm_prog_t *prog)
 	else
 		chainfield = prog->fieldoffsets.chain;
 	if (chainfield < 0)
-		prog->error_cmd("VM_findchain: %s doesnt have the specified chain field !", prog->name);
+		prog->error_cmd("VM_findchainfloat: %s doesnt have the specified chain field !", prog->name);
 
 	chain = (prvm_edict_t *)prog->edicts;
 
@@ -1300,7 +1304,7 @@ void VM_findchainflags(prvm_prog_t *prog)
 	else
 		chainfield = prog->fieldoffsets.chain;
 	if (chainfield < 0)
-		prog->error_cmd("VM_findchain: %s doesnt have the specified chain field !", prog->name);
+		prog->error_cmd("VM_findchainflags: %s doesnt have the specified chain field !", prog->name);
 
 	chain = (prvm_edict_t *)prog->edicts;
 
@@ -2318,11 +2322,11 @@ void VM_strtoupper(prvm_prog_t *prog)
 =========
 VM_strcat
 
-string strcat(string,string,...[string])
+string strcat(string s, string...)
 =========
 */
-//string(string s1, string s2) strcat = #115;
-// concatenates two strings (for example "abc", "def" would return "abcdef")
+//string(string s, string...) strcat = #115;
+// concatenates strings (for example "abc", "def" would return "abcdef")
 // and returns as a tempstring
 void VM_strcat(prvm_prog_t *prog)
 {
@@ -3064,13 +3068,21 @@ float	mod(float val, float m)
 */
 void VM_modulo(prvm_prog_t *prog)
 {
-	prvm_int_t val, m;
+	vec_t val, m;
+
 	VM_SAFEPARMCOUNT(2, VM_modulo);
 
-	val = (prvm_int_t) PRVM_G_FLOAT(OFS_PARM0);
-	m	= (prvm_int_t) PRVM_G_FLOAT(OFS_PARM1);
+	val = PRVM_G_FLOAT(OFS_PARM0);
+	m   = PRVM_G_FLOAT(OFS_PARM1);
 
-	PRVM_G_FLOAT(OFS_RETURN) = (prvm_vec_t) (val % m);
+	// matches how gmqcc implements % when mod() builtin isn't defined, and FTEQW mod()
+	if (m)
+		PRVM_G_FLOAT(OFS_RETURN) = val - m * (prvm_int_t)(val / m);
+	else
+	{
+		VM_Warning(prog, "Attempted modulo of %f by zero\n", val);
+		PRVM_G_FLOAT(OFS_RETURN) = 0;
+	}
 }
 
 static void VM_Search_Init(prvm_prog_t *prog)
@@ -3268,10 +3280,10 @@ string keynumtostring(float keynum)
 */
 void VM_keynumtostring (prvm_prog_t *prog)
 {
-	char tinystr[2];
+	char tinystr[TINYSTR_LEN];
 	VM_SAFEPARMCOUNT(1, VM_keynumtostring);
 
-	PRVM_G_INT(OFS_RETURN) = PRVM_SetTempString(prog, Key_KeynumToString((int)PRVM_G_FLOAT(OFS_PARM0), tinystr, sizeof(tinystr)));
+	PRVM_G_INT(OFS_RETURN) = PRVM_SetTempString(prog, Key_KeynumToString((int)PRVM_G_FLOAT(OFS_PARM0), tinystr, TINYSTR_LEN));
 }
 
 /*
@@ -5560,6 +5572,41 @@ void VM_SV_getextresponse (prvm_prog_t *prog)
 		--sv_net_extresponse_count;
 		first = (sv_net_extresponse_last + NET_EXTRESPONSE_MAX - sv_net_extresponse_count) % NET_EXTRESPONSE_MAX;
 		PRVM_G_INT(OFS_RETURN) = PRVM_SetTempString(prog, sv_net_extresponse[first]);
+	}
+}
+
+// DP_QC_NUDGEOUTOFSOLID
+// float(entity ent) nudgeoutofsolid = #567;
+void VM_nudgeoutofsolid(prvm_prog_t *prog)
+{
+	prvm_edict_t *ent;
+
+	VM_SAFEPARMCOUNTRANGE(1, 1, VM_nudgeoutofsolid);
+
+	ent = PRVM_G_EDICT(OFS_PARM0);
+	if (ent == prog->edicts)
+	{
+		VM_Warning(prog, "nudgeoutofsolid: can not modify world entity\n");
+		PRVM_G_FLOAT(OFS_RETURN) = 0;
+		return;
+	}
+	if (ent->free)
+	{
+		VM_Warning(prog, "nudgeoutofsolid: can not modify free entity\n");
+		PRVM_G_FLOAT(OFS_RETURN) = 0;
+		return;
+	}
+
+	PRVM_G_FLOAT(OFS_RETURN) = PHYS_NudgeOutOfSolid(prog, ent);
+
+	if (PRVM_G_FLOAT(OFS_RETURN) > 0)
+	{
+		if (prog == SVVM_prog)
+			SV_LinkEdict(ent);
+		else if (prog == CLVM_prog)
+			CL_LinkEdict(ent);
+		else
+			Sys_Error("PHYS_NudgeOutOfSolid: cannot be called from %s VM\n", prog->name);
 	}
 }
 

@@ -469,7 +469,7 @@ static void VM_CL_findradius (prvm_prog_t *prog)
 	else
 		chainfield = prog->fieldoffsets.chain;
 	if(chainfield < 0)
-		prog->error_cmd("VM_findchain: %s doesnt have the specified chain field !", prog->name);
+		prog->error_cmd("VM_CL_findradius: %s doesnt have the specified chain field !", prog->name);
 
 	chain = (prvm_edict_t *)prog->edicts;
 
@@ -514,6 +514,42 @@ static void VM_CL_findradius (prvm_prog_t *prog)
 			PRVM_EDICTFIELDEDICT(ent, chainfield) = PRVM_EDICT_TO_PROG(chain);
 			chain = ent;
 		}
+	}
+
+	VM_RETURN_EDICT(chain);
+}
+
+// #566 entity(vector mins, vector maxs) findbox
+// #566 entity(vector mins, vector maxs, .entity tofield) findbox_tofield
+static void VM_CL_findbox (prvm_prog_t *prog)
+{
+	prvm_edict_t *chain;
+	int i, numtouchedicts;
+	static prvm_edict_t *touchedicts[MAX_EDICTS];
+	int chainfield;
+
+	VM_SAFEPARMCOUNTRANGE(2, 3, VM_CL_findbox);
+
+	if(prog->argc == 3)
+		chainfield = PRVM_G_INT(OFS_PARM2);
+	else
+		chainfield = prog->fieldoffsets.chain;
+	if(chainfield < 0)
+		prog->error_cmd("VM_CL_findbox: %s doesnt have the specified chain field !", prog->name);
+
+	chain = (prvm_edict_t *)prog->edicts;
+
+	numtouchedicts = World_EntitiesInBox(&cl.world, PRVM_G_VECTOR(OFS_PARM0), PRVM_G_VECTOR(OFS_PARM1), MAX_EDICTS, touchedicts);
+	if (numtouchedicts > MAX_EDICTS)
+	{
+		// this never happens	//[515]: for what then ?
+		Con_Printf("World_EntitiesInBox returned %i edicts, max was %i\n", numtouchedicts, MAX_EDICTS);
+		numtouchedicts = MAX_EDICTS;
+	}
+	for (i = 0; i < numtouchedicts; ++i)
+	{
+		PRVM_EDICTFIELDEDICT(touchedicts[i], chainfield) = PRVM_EDICT_TO_PROG(chain);
+		chain = touchedicts[i];
 	}
 
 	VM_RETURN_EDICT(chain);
@@ -2641,8 +2677,6 @@ static void VM_CL_copyentity (prvm_prog_t *prog)
 	}
 	memcpy(out->fields.fp, in->fields.fp, prog->entityfields * sizeof(prvm_vec_t));
 
-	if (VectorCompare(PRVM_clientedictvector(out, absmin), PRVM_clientedictvector(out, absmax)))
-		return;
 	CL_LinkEdict(out);
 }
 
@@ -5056,7 +5090,7 @@ VM_fclose,						// #111 void(float fhandle) fclose (FRIK_FILE)
 VM_fgets,						// #112 string(float fhandle) fgets (FRIK_FILE)
 VM_fputs,						// #113 void(float fhandle, string s) fputs (FRIK_FILE)
 VM_strlen,						// #114 float(string s) strlen (FRIK_FILE)
-VM_strcat,						// #115 string(string s1, string s2, ...) strcat (FRIK_FILE)
+VM_strcat,						// #115 string(string s, string...) strcat (FRIK_FILE)
 VM_substring,					// #116 string(string s, float start, float length) substring (FRIK_FILE)
 VM_stov,						// #117 vector(string) stov (FRIK_FILE)
 VM_strzone,						// #118 string(string s) strzone (FRIK_FILE)
@@ -5510,8 +5544,8 @@ NULL,							// #562
 NULL,							// #563
 NULL,							// #564
 NULL,							// #565
-NULL,							// #566
-NULL,							// #567
+VM_CL_findbox,					// #566 entity(vector mins, vector maxs) findbox = #566; (DP_QC_FINDBOX)
+VM_nudgeoutofsolid,				// #567 float(entity ent) nudgeoutofsolid = #567; (DP_QC_NUDGEOUTOFSOLID)
 NULL,							// #568
 NULL,							// #569
 NULL,							// #570

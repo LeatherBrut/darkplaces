@@ -33,6 +33,18 @@
 #include "fs.h"
 #include "cmd.h"
 
+// the highest Unicode character to allow key binding.
+// note that an excessively high value may degrade fps
+// when code is looping through the bindings
+// U+ABFF is probably the highest bindable codepoint,
+// see: https://github.com/DarkPlacesEngine/darkplaces/pull/68#issuecomment-1416802873
+#define MAX_KEY_BINDS 0xAC00
+
+// how long is a "tinystr" to hold a keyboard key's
+// Unicode utf-8 presentation, plus final \x00
+// to allow all characters <= 0xffff, use 4
+#define TINYSTR_LEN 4
+
 //
 // these are the key numbers that should be passed to Key_Event
 //
@@ -353,7 +365,7 @@ typedef enum keynum_e
 	K_MIDINOTE126,
 	K_MIDINOTE127,
 
-	MAX_KEYS
+	MAX_KEYS = MAX_KEY_BINDS
 }
 keynum_t;
 
