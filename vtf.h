@@ -2,7 +2,8 @@
 #include "r_textures.h"
 //thanks to https://noskill.gitbook.io/titanfall2/documentation/textures/valve-texture-format-vtf
 
-enum{
+enum
+{
     IMAGE_FORMAT_NONE = -1,
     IMAGE_FORMAT_RGBA8888 = 0,
     IMAGE_FORMAT_ABGR8888,
@@ -33,4 +34,14 @@ enum{
     IMAGE_FORMAT_UVLX8888
 };
 
-enum
+enum CompiledVtfFlags
+{
+    TEXTUREFLAGS_POINTSAMPLE = 0x00000001,
+    TEXTUREFLAGS_TRILINEAR = 0x00000002,
+    TEXTUREFLAGS_CLAMPS = 0x00000004,
+    TEXTUREFLAGS_CLAMPT = 0x00000008,
+    TEXTUREFLAGS_ANISOTROPIC = 0x000000010,
+    TEXTUREFLAGS_
+    TEXTUREFLAGS_
+
+}
