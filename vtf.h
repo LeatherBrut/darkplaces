@@ -78,5 +78,3 @@ enum CompiledVtfFlags
     TEXTUREFLAGS_UNUSED_80000000 = 0x40000000,
     
 };
-
-s
