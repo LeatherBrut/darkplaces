@@ -1,7 +1,7 @@
 #include <stddef.h>
 #include "r_textures.h"
 //thanks to https://noskill.gitbook.io/titanfall2/documentation/textures/valve-texture-format-vtf
-
+//should be renamed image_vtf.h
 enum
 {
     IMAGE_FORMAT_NONE = -1,

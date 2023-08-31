@@ -3,9 +3,11 @@
 #include "darkplaces.h"
 #include "cl_screen.h"
 #include "image.h"
-#include "vtf.h"
-//thanks to https://noskill.gitbook.io/titanfall2/documentation/textures/valve-texture-format-vtf
-
+#include "img_vtf.h" 
+/*
+ * This file should be renamed to image_vtf.c 
+thanks to https://noskill.gitbook.io/titanfall2/documentation/textures/valve-texture-format-vtf
+*/
 typedef struct tagVTFHEADER
 {
     char            signature [4];
@@ -20,7 +22,7 @@ typedef struct tagVTFHEADER
     float           reflectivity;
     unsigned char   padding1[4];
     float           bumpScale;
-    unsigned int    higthResImageFormat;
+    unsigned int    higthResImageFormat
     unsigned char   mipmapCount;
     unsigned int    lowResImageFormat;
     unsigned char   lowResImageWidth;
@@ -32,3 +34,10 @@ typedef struct tagVTFHEADER
     unsigned int    numRessources;
 
 } VTFHEADER;
+
+struct ResourceEntryInfo{
+    unsigned char   tag[3];
+    unsigned char   flags;
+    unsigned int    offset;
+};
+//Tags 
