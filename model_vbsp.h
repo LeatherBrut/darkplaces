@@ -160,4 +160,37 @@ typedef struct hl2dheader_s
 	int32_t revision;
 } hl2dheader_t;
 
+
+typedef struct hl2dplane_s
+{
+	Vector	normal;
+	float		dist;
+	int			type;
+} hl2dplane_t;
+
+typedef struct Vector
+{
+	float y;
+	float x;
+	float z;
+};
+
+typdef struct hl2degde_s
+{
+	unsigned short v[2];
+
+} hl2dege_t;
+typedef struct hl2dface_s //use hl2flags from aboves ?
+{
+	unsigned short	planenum;
+	byte						side;
+	byte						onNode;
+	int							firstedge;
+	short						numedges;
+	short						texinfo;
+	short
+
+
+}hl2dface_t;
+
 #endif
