@@ -175,7 +175,7 @@ typedef struct Vector
 	float z;
 };
 
-typdef struct hl2degde_s
+typedef struct hl2degde_s
 {
 	unsigned short v[2];
 
@@ -188,9 +188,40 @@ typedef struct hl2dface_s //use hl2flags from aboves ?
 	int							firstedge;
 	short						numedges;
 	short						texinfo;
-	short
+	short						dispinfo;
+	short						sufaceFogVolumeId;
+	byte						styles[4];
+	int 						lightofs;
+	float						area;
+	int 						LightmapTextureMinsInLuxels[2];
+	int							LightmapTextureSizeInLuxels[2];
+	int							oriface;
+	unsigned short	numPrims;
+	unsigned short	firstPrimID;
+	unsigned int		smoothinGroups;
 
 
 }hl2dface_t;
+
+typedef struct hl2dbrush_s
+{
+
+	int		fistside;
+	int		numsides;
+	int		contents;
+
+} hl2dbrush_t;
+
+
+typedef struct hl2bdrushside_s
+{
+	unsigned short		planeneum;
+	short							textinfo;
+	short							dispinfo;
+	short							bevel;
+
+} hl2dbrushside_t;
+
+
 
 #endif
