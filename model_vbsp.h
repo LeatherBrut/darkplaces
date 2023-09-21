@@ -222,6 +222,19 @@ typedef struct hl2bdrushside_s
 
 } hl2dbrushside_t;
 
+typedef struct hl2dnode_s
+{
+	int			planeneum;
+	int			children[2];
+	int			mins[3];
+	int			maxs[3];
+	unsigned short	firsface;
+	unsigned short	numfaces;
+	short		area;
+	short		padding;
+} hl2dnode_t;
+
+
 
 
 #endif
