@@ -74,11 +74,13 @@ Cmd_Defer_f
 Cause a command to be executed after a delay.
 ============
 */
-static cmd_input_t *Cbuf_LinkGet(cmd_buf_t *cbuf, cmd_input_t *existing);
+static void Cbuf_ParseText(cmd_state_t *cmd, llist_t *head, cmd_input_t *existing, const char *text, qbool allowpending);
+static void Cbuf_LinkString(cmd_state_t *cmd, llist_t *head, cmd_input_t *existing, const char *text, qbool leavepending, unsigned int cmdsize);
 static void Cmd_Defer_f (cmd_state_t *cmd)
 {
 	cmd_input_t *current;
 	cmd_buf_t *cbuf = cmd->cbuf;
+	unsigned int cmdsize;
 
 	if(Cmd_Argc(cmd) == 1)
 	{
@@ -93,25 +95,19 @@ static void Cmd_Defer_f (cmd_state_t *cmd)
 	else if(Cmd_Argc(cmd) == 2 && !strcasecmp("clear", Cmd_Argv(cmd, 1)))
 	{
 		while(!List_Is_Empty(&cbuf->deferred))
-			List_Move_Tail(cbuf->deferred.next, &cbuf->free);
-	}
-	else if(Cmd_Argc(cmd) == 3)
-	{
-		const char *text = Cmd_Argv(cmd, 2);
-		current = Cbuf_LinkGet(cbuf, NULL);
-		current->length = strlen(text);
-		current->source = cmd;
-		current->delay = atof(Cmd_Argv(cmd, 1));
-
-		if(current->size < current->length)
 		{
-			current->text = (char *)Mem_Realloc(cbuf_mempool, current->text, current->length + 1);
-			current->size = current->length;
+			cbuf->size -= List_Entry(cbuf->deferred.next, cmd_input_t, list)->length;
+			List_Move_Tail(cbuf->deferred.next, &cbuf->free);
 		}
+	}
+	else if(Cmd_Argc(cmd) == 3 && (cmdsize = strlen(Cmd_Argv(cmd, 2))) )
+	{
+		Cbuf_Lock(cbuf);
 
-		strlcpy(current->text, text, current->length + 1);
+		Cbuf_LinkString(cmd, &cbuf->deferred, NULL, Cmd_Argv(cmd, 2), false, cmdsize);
+		List_Entry(cbuf->deferred.prev, cmd_input_t, list)->delay = atof(Cmd_Argv(cmd, 1));
 
-		List_Move_Tail(&current->list, &cbuf->deferred);
+		Cbuf_Unlock(cbuf);
 	}
 	else
 	{
@@ -169,182 +165,135 @@ static void Cmd_Centerprint_f (cmd_state_t *cmd)
 
 						COMMAND BUFFER
 
+ * The Quake command-line is super basic. It can be entered in the console
+ * or in config files. A semicolon is used to terminate a command and chain
+ * them together. Otherwise, a newline delineates command input.
+ *
+ * In most engines, the Quake command-line is a simple linear text buffer that
+ * is parsed when it executes. In Darkplaces, we use a linked list of command
+ * input and parse the input on the spot.
+ *
+ * This was done because Darkplaces allows multiple command interpreters on the
+ * same thread. Previously, each interpreter maintained its own buffer and this
+ * caused problems related to execution order, and maintaining a single simple
+ * buffer for all interpreters makes it non-trivial to keep track of which
+ * command should execute on which interpreter.
+
 =============================================================================
 */
 
-static cmd_input_t *Cbuf_LinkGet(cmd_buf_t *cbuf, cmd_input_t *existing)
+/*
+============
+Cbuf_NodeGet
+
+Returns an existing buffer node for appending or reuse, or allocates a new one
+============
+*/
+static cmd_input_t *Cbuf_NodeGet(cmd_buf_t *cbuf, cmd_input_t *existing)
 {
-	cmd_input_t *ret = NULL;
+	cmd_input_t *node;
 	if(existing && existing->pending)
-		ret = existing;
+		node = existing;
 	else if(!List_Is_Empty(&cbuf->free))
 	{
-		ret = List_Entry(cbuf->free.next, cmd_input_t, list);
-		ret->length = 0;
-		ret->pending = false;
+		node = List_Entry(cbuf->free.next, cmd_input_t, list);
+		node->length = node->pending = 0;
 	}
-	return ret;
-}
-
-static cmd_input_t *Cmd_AllocInputNode(void)
-{
-	cmd_input_t *node = (cmd_input_t *)Mem_Alloc(cbuf_mempool, sizeof(cmd_input_t));
-	node->list.prev = node->list.next = &node->list;
-	node->size = node->length = node->pending = 0;
+	else
+	{
+		node = (cmd_input_t *)Mem_Alloc(cbuf_mempool, sizeof(cmd_input_t));
+		node->list.prev = node->list.next = &node->list;
+		node->size = node->length = node->pending = 0;
+	}
 	return node;
 }
 
+/*
+============
+Cbuf_LinkString
 
-// Cloudwalk FIXME: The entire design of this thing is overly complicated.
-// We could very much safely have one input node per line whether or not
-// the command was terminated. We don't need to split up input nodes per command
-// executed.
-static size_t Cmd_ParseInput (cmd_input_t **output, char **input)
+Copies a command string into a buffer node
+============
+*/
+static void Cbuf_LinkString(cmd_state_t *cmd, llist_t *head, cmd_input_t *existing, const char *text, qbool leavepending, unsigned int cmdsize)
 {
-	size_t pos, cmdsize = 0, start = 0;
-	qbool command = false, lookahead = false;
-	qbool quotes = false, comment = false;
-	qbool escaped = false;
+	cmd_buf_t *cbuf = cmd->cbuf;
+	cmd_input_t *node = Cbuf_NodeGet(cbuf, existing);
+	unsigned int offset = node->length; // > 0 if(pending)
 
-	/*
-	 * The Quake command-line is super basic. It can be entered in the console
-	 * or in config files. A semicolon is used to terminate a command and chain
-	 * them together. Otherwise, a newline delineates command input.
-	 * 
-	 * In most engines, the Quake command-line is a simple linear text buffer that
-	 * is parsed when it executes. In Darkplaces, we use a linked list of command
-	 * input and parse the input on the spot.
-	 * 
-	 * This was done because Darkplaces allows multiple command interpreters on the
-	 * same thread. Previously, each interpreter maintained its own buffer and this
-	 * caused problems related to execution order, and maintaining a single simple
-	 * buffer for all interpreters makes it non-trivial to keep track of which
-	 * command should execute on which interpreter.
-	 */
-
-	// Run until command and lookahead are both true, or until we run out of input.
-	for (pos = 0; (*input)[pos]; pos++)
+	// node will match existing if its text was pending continuation
+	if(node != existing)
 	{
-		// Look for newlines and semicolons. Ignore semicolons in quotes.
-		switch((*input)[pos])
-		{
-		case '\r':
-		case '\n':
-			command = false;
-			comment = false;
-			break;
-		default: 
-			if(!comment) // Not a newline so far. Still not a valid command yet.
-			{
-				if(!quotes && (*input)[pos] == ';') // Ignore semicolons in quotes.
-					command = false;
-				else if (ISCOMMENT((*input), pos)) // Comments
-				{
-					comment = true;
-					command = false;
-				}
-				else
-				{
-					command = true;
-					if(!lookahead)
-					{
-						if(!cmdsize)
-							start = pos;
-						cmdsize++;
-					}
-
-					switch((*input)[pos])
-					{
-					case '"':
-						if (!escaped)
-							quotes = !quotes;
-						else
-							escaped = false;
-						break;
-					case '\\':
-						if (!escaped && quotes)
-							escaped = true;
-						else if (escaped)
-							escaped = false;
-						break;
-					}
-				}
-			}
-		}
-		if(cmdsize && !command)
-			lookahead = true;
-
-		if(command && lookahead)
-			break;
+		node->source = cmd;
+		List_Move_Tail(&node->list, head);
 	}
 
-	if(cmdsize)
+	node->length += cmdsize;
+	if(node->size < node->length)
 	{
-		size_t offset = 0;
-
-		if(!*output)
-			*output = Cmd_AllocInputNode();
-
-		// Append, since this input line hasn't closed yet.
-		if((*output)->pending)
-			offset = (*output)->length;
-
-		(*output)->length += cmdsize;
-
-		if((*output)->size < (*output)->length)
-		{
-			(*output)->text = (char *)Mem_Realloc(cbuf_mempool, (*output)->text, (*output)->length + 1);
-			(*output)->size = (*output)->length;
-		}
-
-		strlcpy(&(*output)->text[offset], &(*input)[start], cmdsize + 1);
-		
-		/*
-		 * If we were still looking ahead by the time we broke from the loop, the command input
-		 * hasn't terminated yet and we're still expecting more, so keep this node open for appending later.
-		 */
-		(*output)->pending = !lookahead;
+		node->text = (char *)Mem_Realloc(cbuf_mempool, node->text, node->length + 1);
+		node->size = node->length;
 	}
+	cbuf->size += cmdsize;
 
-	// Set input to its new position. Can be NULL.
-	*input = &(*input)[pos];
-
-	return cmdsize;
+	strlcpy(&node->text[offset], text, cmdsize + 1); // always sets the last char to \0
+	//Con_Printf("^5Cbuf_LinkString(): %s `^7%s^5`\n", node->pending ? "append" : "new", &node->text[offset]);
+	node->pending = leavepending;
 }
 
-// Cloudwalk: Not happy with this, but it works.
-static void Cbuf_LinkCreate(cmd_state_t *cmd, llist_t *head, cmd_input_t *existing, const char *text)
+/*
+============
+Cbuf_ParseText
+
+Parses text to isolate command strings for linking into the buffer
+separators: \n \r or unquoted and uncommented ';'
+============
+*/
+static void Cbuf_ParseText(cmd_state_t *cmd, llist_t *head, cmd_input_t *existing, const char *text, qbool allowpending)
 {
-	char *in = (char *)&text[0];
-	cmd_buf_t *cbuf = cmd->cbuf;
-	size_t totalsize = 0, newsize = 0;
-	cmd_input_t *current = NULL;
+	unsigned int cmdsize = 0, start = 0, pos;
+	qbool quotes = false, comment = false;
 
-	// Slide the pointer down until we reach the end
-	while(*in)
+	for (pos = 0; text[pos]; ++pos)
 	{
-		// Check if the current node is still accepting input (input line hasn't terminated)
-		current = Cbuf_LinkGet(cbuf, existing);
-		newsize = Cmd_ParseInput(&current, &in);
-
-		// Valid command
-		if(newsize)
+		switch(text[pos])
 		{
-			// current will match existing if the input line hasn't terminated yet
-			if(current != existing)
-			{
-				current->source = cmd;
-				List_Move_Tail(&current->list, head);
-			}
+			case ';':
+				if (comment || quotes)
+					break;
+			case '\r':
+			case '\n':
+				comment = false;
+				quotes = false; // matches div0-stable
+				if (cmdsize)
+				{
+					Cbuf_LinkString(cmd, head, existing, &text[start], false, cmdsize);
+					cmdsize = 0;
+				}
+				else if (existing && existing->pending) // all I got was this lousy \n
+					existing->pending = false;
+				continue; // don't increment cmdsize
 
-			totalsize += newsize;
+			case '/':
+				if (!quotes && text[pos + 1] == '/' && (pos == 0 || ISWHITESPACE(text[pos - 1])))
+					comment = true;
+				break;
+			case '"':
+				if (!comment && (pos == 0 || text[pos - 1] != '\\'))
+					quotes = !quotes;
+				break;
 		}
-		else if (current == existing && !totalsize)
-			current->pending = false;
-		current = NULL;
+
+		if (!comment)
+		{
+			if (!cmdsize)
+				start = pos;
+			++cmdsize;
+		}
 	}
 
-	cbuf->size += totalsize;
+	if (cmdsize) // the line didn't end yet but we do have a string
+		Cbuf_LinkString(cmd, head, existing, &text[start], allowpending, cmdsize);
 }
 
 /*
@@ -366,9 +315,9 @@ void Cbuf_AddText (cmd_state_t *cmd, const char *text)
 		Con_Print("Cbuf_AddText: overflow\n");
 	else
 	{
-		Cbuf_LinkCreate(cmd, &llist, (List_Is_Empty(&cbuf->start) ? NULL : List_Entry(cbuf->start.prev, cmd_input_t, list)), text);
-		if(!List_Is_Empty(&llist))
-			List_Splice_Tail(&llist, &cbuf->start);
+		// If the string terminates but the (last) line doesn't, the node will be left in the pending state (to be continued).
+		Cbuf_ParseText(cmd, &llist, (List_Is_Empty(&cbuf->start) ? NULL : List_Entry(cbuf->start.prev, cmd_input_t, list)), text, true);
+		List_Splice_Tail(&llist, &cbuf->start);
 	}
 	Cbuf_Unlock(cbuf);
 }
@@ -378,7 +327,6 @@ void Cbuf_AddText (cmd_state_t *cmd, const char *text)
 Cbuf_InsertText
 
 Adds command text immediately after the current command
-FIXME: actually change the command buffer to do less copying
 ============
 */
 void Cbuf_InsertText (cmd_state_t *cmd, const char *text)
@@ -389,14 +337,15 @@ void Cbuf_InsertText (cmd_state_t *cmd, const char *text)
 
 	Cbuf_Lock(cbuf);
 
-	// we need to memmove the existing text and stuff this in before it...
 	if (cbuf->size + l >= cbuf->maxsize)
 		Con_Print("Cbuf_InsertText: overflow\n");
 	else
 	{
-		Cbuf_LinkCreate(cmd, &llist, (List_Is_Empty(&cbuf->start) ? NULL : List_Entry(cbuf->start.next, cmd_input_t, list)), text);
-		if(!List_Is_Empty(&llist))
-			List_Splice(&llist, &cbuf->start);
+		// bones_was_here assertion: when prepending to the buffer it never makes sense to leave node(s) in the `pending` state,
+		// it would have been impossible to append to such text later in the old raw text buffer,
+		// and allowing it causes bugs when .cfg files lack \n at EOF (see: https://gitlab.com/xonotic/darkplaces/-/issues/378).
+		Cbuf_ParseText(cmd, &llist, (List_Is_Empty(&cbuf->start) ? NULL : List_Entry(cbuf->start.next, cmd_input_t, list)), text, false);
+		List_Splice(&llist, &cbuf->start);
 	}
 
 	Cbuf_Unlock(cbuf);
@@ -409,25 +358,25 @@ Cbuf_Execute_Deferred --blub
 */
 static void Cbuf_Execute_Deferred (cmd_buf_t *cbuf)
 {
-	cmd_input_t *current;
-	double eat;
+	cmd_input_t *current, *n;
+	vec_t eat;
 
 	if (host.realtime - cbuf->deferred_oldtime < 0 || host.realtime - cbuf->deferred_oldtime > 1800)
 		cbuf->deferred_oldtime = host.realtime;
 	eat = host.realtime - cbuf->deferred_oldtime;
-	if (eat < (1.0 / 120.0))
+	if (eat < 1/128)
 		return;
 	cbuf->deferred_oldtime = host.realtime;
 
-	List_For_Each_Entry(current, &cbuf->deferred, cmd_input_t, list)
+	List_For_Each_Entry_Safe(current, n, &cbuf->deferred, cmd_input_t, list)
 	{
 		current->delay -= eat;
 		if(current->delay <= 0)
 		{
-			cbuf->size += current->length;
-			List_Move(&current->list, &cbuf->start);
-			// We must return and come back next frame or the engine will freeze. Fragile... like glass :3
-			return;
+			Cbuf_AddText(current->source, current->text); // parse deferred string and append its cmdstring(s)
+			List_Entry(cbuf->start.prev, cmd_input_t, list)->pending = false; // faster than div0-stable's Cbuf_AddText(";\n");
+			List_Move_Tail(&current->list, &cbuf->free); // make deferred string memory available for reuse
+			cbuf->size -= current->length;
 		}
 	}
 }
@@ -437,12 +386,14 @@ static void Cbuf_Execute_Deferred (cmd_buf_t *cbuf)
 Cbuf_Execute
 ============
 */
+extern qbool prvm_runawaycheck;
 static qbool Cmd_PreprocessString(cmd_state_t *cmd, const char *intext, char *outtext, unsigned maxoutlen, cmd_alias_t *alias );
 void Cbuf_Execute (cmd_buf_t *cbuf)
 {
 	cmd_input_t *current;
 	char preprocessed[MAX_INPUTLINE];
 	char *firstchar;
+	unsigned int i = 0;
 
 	// LadyHavoc: making sure the tokenizebuffer doesn't get filled up by repeated crashes
 	cbuf->tokenizebufferpos = 0;
@@ -493,6 +444,16 @@ void Cbuf_Execute (cmd_buf_t *cbuf)
 			 */
 			cbuf->wait = false;
 			break;
+		}
+
+		if (++i == 1000000 && prvm_runawaycheck)
+		{
+			Con_Printf(CON_WARN "Cbuf_Execute: runaway loop counter hit limit of %d commands, clearing command buffers!\n", i);
+			while (!List_Is_Empty(&cbuf->start))
+				List_Move_Tail(cbuf->start.next, &cbuf->free);
+			while (!List_Is_Empty(&cbuf->deferred))
+				List_Move_Tail(cbuf->deferred.next, &cbuf->free);
+			cbuf->size = 0;
 		}
 	}
 }
@@ -1654,7 +1615,7 @@ void Cmd_Init(void)
 	cmd_buf_t *cbuf;
 	cbuf_mempool = Mem_AllocPool("Command buffer", 0, NULL);
 	cbuf = (cmd_buf_t *)Mem_Alloc(cbuf_mempool, sizeof(cmd_buf_t));
-	cbuf->maxsize = 655360;
+	cbuf->maxsize = CMDBUFSIZE;
 	cbuf->lock = Thread_CreateMutex();
 	cbuf->wait = false;
 	host.cbuf = cbuf;
@@ -1745,7 +1706,7 @@ void Cmd_Shutdown(void)
 Cmd_Argc
 ============
 */
-int		Cmd_Argc (cmd_state_t *cmd)
+inline int Cmd_Argc (cmd_state_t *cmd)
 {
 	return cmd->argc;
 }
@@ -1755,7 +1716,7 @@ int		Cmd_Argc (cmd_state_t *cmd)
 Cmd_Argv
 ============
 */
-const char *Cmd_Argv(cmd_state_t *cmd, int arg)
+inline const char *Cmd_Argv(cmd_state_t *cmd, int arg)
 {
 	if (arg >= cmd->argc )
 		return cmd->null_string;
@@ -1767,7 +1728,7 @@ const char *Cmd_Argv(cmd_state_t *cmd, int arg)
 Cmd_Args
 ============
 */
-const char *Cmd_Args (cmd_state_t *cmd)
+inline const char *Cmd_Args (cmd_state_t *cmd)
 {
 	return cmd->args;
 }
