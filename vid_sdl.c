@@ -72,7 +72,6 @@ static qbool vid_usingmouse = false;
 static qbool vid_usingmouse_relativeworks = false; // SDL2 workaround for unimplemented RelativeMouse mode
 static qbool vid_usinghidecursor = false;
 static qbool vid_hasfocus = false;
-static qbool vid_isfullscreen;
 static qbool vid_usingvsync = false;
 static SDL_Joystick *vid_sdljoystick = NULL;
 static SDL_GameController *vid_sdlgamecontroller = NULL;
@@ -1349,7 +1348,6 @@ void VID_Init (void)
 	vid_sdl_initjoysticksystem = SDL_InitSubSystem(SDL_INIT_JOYSTICK) >= 0;
 	if (!vid_sdl_initjoysticksystem)
 		Con_Printf(CON_ERROR "Failed to init SDL joystick subsystem: %s\n", SDL_GetError());
-	vid_isfullscreen = false;
 }
 
 static int vid_sdljoystickindex = -1;
@@ -1472,12 +1470,6 @@ static void AdjustWindowBounds(viddef_mode_t *mode, RECT *rect)
 }
 #endif
 
-extern cvar_t gl_info_vendor;
-extern cvar_t gl_info_renderer;
-extern cvar_t gl_info_version;
-extern cvar_t gl_info_platform;
-extern cvar_t gl_info_driver;
-
 static qbool VID_InitModeGL(viddef_mode_t *mode)
 {
 	int windowflags = SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL;
@@ -1487,7 +1479,8 @@ static qbool VID_InitModeGL(viddef_mode_t *mode)
 	int yPos = SDL_WINDOWPOS_UNDEFINED;
 	int i;
 #ifndef USE_GLES2
-	const char *drivername;
+	// SDL usually knows best
+	const char *drivername = NULL;
 #endif
 
 	win_half_width = mode->width>>1;
@@ -1499,9 +1492,6 @@ static qbool VID_InitModeGL(viddef_mode_t *mode)
 	VID_OutputVersion();
 
 #ifndef USE_GLES2
-	// SDL usually knows best
-	drivername = NULL;
-
 // COMMANDLINEOPTION: SDL GL: -gl_driver <drivername> selects a GL driver library, default is whatever SDL recommends, useful only for 3dfxogl.dll/3dfxvgl.dll or fxmesa or similar, if you don't know what this is for, you don't need it
 	i = Sys_CheckParm("-gl_driver");
 	if (i && i < sys.argc - 1)
@@ -1520,40 +1510,41 @@ static qbool VID_InitModeGL(viddef_mode_t *mode)
 	windowflags |= SDL_WINDOW_FULLSCREEN | SDL_WINDOW_BORDERLESS;
 #endif
 
-	vid_isfullscreen = false;
-	{
-		if (mode->fullscreen) {
-			if (vid_desktopfullscreen.integer)
-			{
-				vid_mode_t *m = VID_GetDesktopMode();
-				mode->width = m->width;
-				mode->height = m->height;
-				windowflags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
-			}
-			else
-				windowflags |= SDL_WINDOW_FULLSCREEN;
-			vid_isfullscreen = true;
-		}
-		else {
-			if (vid_borderless.integer)
-				windowflags |= SDL_WINDOW_BORDERLESS;
-#ifdef WIN32
-			if (vid_ignore_taskbar.integer) {
-				xPos = SDL_WINDOWPOS_CENTERED;
-				yPos = SDL_WINDOWPOS_CENTERED;
-			}
-			else {
-				RECT rect;
-				AdjustWindowBounds(mode, &rect);
-				xPos = rect.left;
-				yPos = rect.top;
-			}
-#endif
-		}
-	}
-	//flags |= SDL_HWSURFACE;
 
-	if (vid_mouse_clickthrough.integer && !vid_isfullscreen)
+	if (mode->fullscreen)
+	{
+		if (vid_desktopfullscreen.integer)
+		{
+			vid_mode_t *m = VID_GetDesktopMode();
+			mode->width = m->width;
+			mode->height = m->height;
+			windowflags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+		}
+		else
+			windowflags |= SDL_WINDOW_FULLSCREEN;
+	}
+	else
+	{
+		if (vid_borderless.integer)
+			windowflags |= SDL_WINDOW_BORDERLESS;
+#ifdef WIN32
+		if (vid_ignore_taskbar.integer)
+		{
+			xPos = SDL_WINDOWPOS_CENTERED;
+			yPos = SDL_WINDOWPOS_CENTERED;
+		}
+		else
+		{
+			RECT rect;
+			AdjustWindowBounds(mode, &rect);
+			xPos = rect.left;
+			yPos = rect.top;
+		}
+#endif
+	}
+
+
+	if (vid_mouse_clickthrough.integer)
 		SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
 
 	SDL_GL_SetAttribute (SDL_GL_DOUBLEBUFFER, 1);
@@ -1579,6 +1570,9 @@ static qbool VID_InitModeGL(viddef_mode_t *mode)
 	SDL_GL_SetAttribute (SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
+	/* Requesting a Core profile and 3.2 minimum is mandatory on macOS and older Mesa drivers.
+	 * It works fine on other drivers too except NVIDIA, see HACK below.
+	 */
 #endif
 
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, (gl_debug.integer > 0 ? SDL_GL_CONTEXT_DEBUG_FLAG : 0));
@@ -1601,10 +1595,39 @@ static qbool VID_InitModeGL(viddef_mode_t *mode)
 		return false;
 	}
 
+	GL_InitFunctions();
+
+#if !defined(USE_GLES2) && !defined(MACOSX)
+	// NVIDIA hates the Core profile and limits the version to the minimum we specified.
+	// HACK: to detect NVIDIA we first need a context, fortunately replacing it takes a few milliseconds
+	gl_vendor = (const char *)qglGetString(GL_VENDOR);
+	if (strncmp(gl_vendor, "NVIDIA", 6) == 0)
+	{
+		Con_DPrint("The Way It's Meant To Be Played: replacing OpenGL Core profile with Compatibility profile...\n");
+		SDL_GL_DeleteContext(context);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+		context = SDL_GL_CreateContext(window);
+		if (context == NULL)
+		{
+			Con_Printf(CON_ERROR "Failed to initialize OpenGL context: %s\n", SDL_GetError());
+			VID_Shutdown();
+			return false;
+		}
+	}
+#endif
+
 	SDL_GL_SetSwapInterval(bound(-1, vid_vsync.integer, 1));
 	vid_usingvsync = (vid_vsync.integer != 0);
 
-	gl_platform = "SDL";
+	vid_hidden = false;
+	vid_activewindow = true;
+	vid_hasfocus = true;
+	vid_usingmouse = false;
+	vid_usinghidecursor = false;
+
+	// clear to black (loading plaque will be seen over this)
+	GL_Clear(GL_COLOR_BUFFER_BIT, NULL, 1.0f, 0);
+	VID_Finish(); // checks vid_hidden
 
 	GL_Setup();
 
@@ -1612,39 +1635,11 @@ static qbool VID_InitModeGL(viddef_mode_t *mode)
 	Cvar_SetQuick(&gl_info_vendor, gl_vendor);
 	Cvar_SetQuick(&gl_info_renderer, gl_renderer);
 	Cvar_SetQuick(&gl_info_version, gl_version);
-	Cvar_SetQuick(&gl_info_platform, gl_platform ? gl_platform : "");
-	Cvar_SetQuick(&gl_info_driver, gl_driver);
+	Cvar_SetQuick(&gl_info_platform, "SDL");
+	Cvar_SetQuick(&gl_info_driver, drivername ? drivername : "");
 
-	// LadyHavoc: report supported extensions
-	Con_DPrintf("\nQuakeC extensions for server and client:");
-	for (i = 0; vm_sv_extensions[i]; i++)
-		Con_DPrintf(" %s", vm_sv_extensions[i]);
-	Con_DPrintf("\n");
-#ifdef CONFIG_MENU
-	Con_DPrintf("\nQuakeC extensions for menu:");
-	for (i = 0; vm_m_extensions[i]; i++)
-		Con_DPrintf(" %s", vm_m_extensions[i]);
-	Con_DPrintf("\n");
-#endif
-
-	// clear to black (loading plaque will be seen over this)
-	GL_Clear(GL_COLOR_BUFFER_BIT, NULL, 1.0f, 0);
-
-	vid_hidden = false;
-	vid_activewindow = false;
-	vid_hasfocus = true;
-	vid_usingmouse = false;
-	vid_usinghidecursor = false;
-		
 	return true;
 }
-
-extern cvar_t gl_info_extensions;
-extern cvar_t gl_info_vendor;
-extern cvar_t gl_info_renderer;
-extern cvar_t gl_info_version;
-extern cvar_t gl_info_platform;
-extern cvar_t gl_info_driver;
 
 qbool VID_InitMode(viddef_mode_t *mode)
 {
@@ -1664,14 +1659,12 @@ void VID_Shutdown (void)
 	VID_EnableJoystick(false);
 	VID_SetMouse(false, false);
 
+	SDL_GL_DeleteContext(context);
+	context = NULL;
 	SDL_DestroyWindow(window);
 	window = NULL;
 
 	SDL_QuitSubSystem(SDL_INIT_VIDEO);
-
-	gl_driver[0] = 0;
-	gl_extensions = "";
-	gl_platform = "";
 }
 
 void VID_Finish (void)

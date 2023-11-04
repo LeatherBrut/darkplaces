@@ -129,7 +129,7 @@ cvar_t gl_info_vendor = {CF_CLIENT | CF_READONLY, "gl_info_vendor", "", "indicat
 cvar_t gl_info_renderer = {CF_CLIENT | CF_READONLY, "gl_info_renderer", "", "indicates graphics chip model and other information"};
 cvar_t gl_info_version = {CF_CLIENT | CF_READONLY, "gl_info_version", "", "indicates version of current renderer. begins with 1.0.0, 1.1.0, 1.2.0, 1.3.1 etc."};
 cvar_t gl_info_extensions = {CF_CLIENT | CF_READONLY, "gl_info_extensions", "", "indicates extension list found by engine, space separated."};
-cvar_t gl_info_platform = {CF_CLIENT | CF_READONLY, "gl_info_platform", "", "indicates GL platform: WGL, GLX, or AGL."};
+cvar_t gl_info_platform = {CF_CLIENT | CF_READONLY, "gl_info_platform", "", "indicates GL platform: SDL, SDL, or SDL."};
 cvar_t gl_info_driver = {CF_CLIENT | CF_READONLY, "gl_info_driver", "", "name of driver library (opengl32.dll, libGL.so.1, or whatever)."};
 
 cvar_t vid_fullscreen = {CF_CLIENT | CF_ARCHIVE, "vid_fullscreen", "1", "use fullscreen (1) or windowed (0)"};
@@ -191,12 +191,6 @@ const char *gl_vendor;
 const char *gl_renderer;
 // begins with 1.0.0, 1.1.0, 1.2.0, 1.2.1, 1.3.0, 1.3.1, or 1.4.0
 const char *gl_version;
-// extensions list, space separated
-const char *gl_extensions;
-// WGL, GLX, or AGL
-const char *gl_platform;
-// name of driver library (opengl32.dll, libGL.so.1, or whatever)
-char gl_driver[256];
 
 #ifndef USE_GLES2
 GLboolean (GLAPIENTRY *qglIsBuffer) (GLuint buffer);
@@ -686,43 +680,17 @@ void VID_ClearExtensions(void)
 	memset(&vid.support, 0, sizeof(vid.support));
 }
 
-void GL_Setup(void)
+void GL_InitFunctions(void)
 {
-	char *s;
-	int j;
-	GLint numextensions = 0;
+#ifndef USE_GLES2
 	const glfunction_t *func;
 	qbool missingrequiredfuncs = false;
 	static char missingfuncs[16384];
 
-#ifndef USE_GLES2
 	// first fetch the function pointers for everything - after this we can begin making GL calls.
 	for (func = openglfuncs; func->name != NULL; func++)
 		*func->funcvariable = (void *)GL_GetProcAddress(func->name);
-#endif
 
-	gl_renderer = (const char *)qglGetString(GL_RENDERER);
-	gl_vendor = (const char *)qglGetString(GL_VENDOR);
-	gl_version = (const char *)qglGetString(GL_VERSION);
-
-	Con_Printf("GL_VENDOR: %s\n", gl_vendor);
-	Con_Printf("GL_RENDERER: %s\n", gl_renderer);
-	Con_Printf("GL_VERSION: %s\n", gl_version);
-
-#ifndef USE_GLES2
-	qglGetIntegerv(GL_NUM_EXTENSIONS, &numextensions);
-	Con_DPrint("GL_EXTENSIONS:\n");
-	for (j = 0; j < numextensions; j++)
-	{
-		const char *ext = (const char *)qglGetStringi(GL_EXTENSIONS, j);
-		Con_DPrintf(" %s", ext);
-		if(j && !(j % 3))
-			Con_DPrintf("\n");
-	}
-	Con_DPrint("\n");
-#endif //USE_GLES2
-
-#ifndef USE_GLES2
 	missingfuncs[0] = 0;
 	for (func = openglfuncs; func && func->name != NULL; func++)
 	{
@@ -738,6 +706,42 @@ void GL_Setup(void)
 	if (missingrequiredfuncs)
 		Sys_Error("OpenGL driver/hardware lacks required features:\n%s", missingfuncs);
 #endif
+}
+
+void GL_Setup(void)
+{
+	char *s;
+	int j;
+	GLint numextensions = 0;
+	int majorv, minorv;
+
+	gl_renderer = (const char *)qglGetString(GL_RENDERER);
+	gl_vendor = (const char *)qglGetString(GL_VENDOR);
+	gl_version = (const char *)qglGetString(GL_VERSION);
+
+	Con_Printf("GL_VENDOR: %s\n", gl_vendor);
+	Con_Printf("GL_RENDERER: %s\n", gl_renderer);
+	Con_Printf("GL_VERSION: %s\n", gl_version);
+
+#ifndef USE_GLES2
+	qglGetIntegerv(GL_MAJOR_VERSION, &majorv);
+	qglGetIntegerv(GL_MINOR_VERSION, &minorv);
+	vid.support.glversion = 10 * majorv + minorv;
+	if (vid.support.glversion < 32)
+		// fallback, should never get here: GL context creation should have failed
+		Sys_Error("OpenGL driver/hardware supports version %i.%i but 3.2 is the minimum\n", majorv, minorv);
+
+	qglGetIntegerv(GL_NUM_EXTENSIONS, &numextensions);
+	Con_DPrint("GL_EXTENSIONS:\n");
+	for (j = 0; j < numextensions; j++)
+	{
+		const char *ext = (const char *)qglGetStringi(GL_EXTENSIONS, j);
+		Con_DPrintf(" %s", ext);
+		if(j && !(j % 3))
+			Con_DPrintf("\n");
+	}
+	Con_DPrint("\n");
+#endif //USE_GLES2
 
 	Con_DPrint("Checking OpenGL extensions...\n");
 
@@ -773,6 +777,17 @@ void GL_Setup(void)
 // COMMANDLINEOPTION: GL: -notexture4 disables GL_AMD_texture_texture4 (which provides fetch4 sampling)
 // COMMANDLINEOPTION: GL: -notexturegather disables GL_ARB_texture_gather (which provides fetch4 sampling)
 // COMMANDLINEOPTION: GL: -nogldebugoutput disables GL_ARB_debug_output (which provides the gl_debug feature, if enabled)
+
+#ifdef WIN32
+	// gl_texturecompression_color is somehow broken on AMD's Windows driver,
+	// see: https://gitlab.com/xonotic/darkplaces/-/issues/228
+	// HACK: force it off (less bad than adding hacky checks to the renderer)
+	if (strncmp(gl_renderer, "AMD Radeon(TM)", 14) == 0)
+	{
+		Cvar_SetQuick(&gl_texturecompression_color, "0");
+		gl_texturecompression_color.flags |= CF_READONLY;
+	}
+#endif
 
 #ifdef GL_MAX_DRAW_BUFFERS
 	qglGetIntegerv(GL_MAX_DRAW_BUFFERS, (GLint*)&vid.maxdrawbuffers);
