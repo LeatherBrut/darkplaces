@@ -503,6 +503,7 @@ static void Host_Init (void)
 	{
 		// put up the loading image so the user doesn't stare at a black screen...
 		SCR_BeginLoadingPlaque(true);
+		S_Startup();
 #ifdef CONFIG_MENU
 		MR_Init();
 #endif
@@ -644,7 +645,7 @@ static double Host_Frame(double time)
 	Curl_Frame();
 
 	// get new SDL events and add commands from keybindings to the cbuf
-	Sys_SendKeyEvents();
+	Sys_SDL_HandleEvents();
 
 	// process console commands
 	Cbuf_Frame(host.cbuf);

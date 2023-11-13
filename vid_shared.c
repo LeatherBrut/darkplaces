@@ -129,7 +129,6 @@ cvar_t gl_info_vendor = {CF_CLIENT | CF_READONLY, "gl_info_vendor", "", "indicat
 cvar_t gl_info_renderer = {CF_CLIENT | CF_READONLY, "gl_info_renderer", "", "indicates graphics chip model and other information"};
 cvar_t gl_info_version = {CF_CLIENT | CF_READONLY, "gl_info_version", "", "indicates version of current renderer. begins with 1.0.0, 1.1.0, 1.2.0, 1.3.1 etc."};
 cvar_t gl_info_extensions = {CF_CLIENT | CF_READONLY, "gl_info_extensions", "", "indicates extension list found by engine, space separated."};
-cvar_t gl_info_platform = {CF_CLIENT | CF_READONLY, "gl_info_platform", "", "indicates GL platform: SDL, SDL, or SDL."};
 cvar_t gl_info_driver = {CF_CLIENT | CF_READONLY, "gl_info_driver", "", "name of driver library (opengl32.dll, libGL.so.1, or whatever)."};
 
 cvar_t vid_fullscreen = {CF_CLIENT | CF_ARCHIVE, "vid_fullscreen", "1", "use fullscreen (1) or windowed (0)"};
@@ -148,9 +147,10 @@ cvar_t vid_touchscreen_density = {CF_CLIENT, "vid_touchscreen_density", "2.0", "
 cvar_t vid_touchscreen_xdpi = {CF_CLIENT, "vid_touchscreen_xdpi", "300", "Horizontal DPI of the screen (only valid on Android currently)"};
 cvar_t vid_touchscreen_ydpi = {CF_CLIENT, "vid_touchscreen_ydpi", "300", "Vertical DPI of the screen (only valid on Android currently)"};
 
-cvar_t vid_vsync = {CF_CLIENT | CF_ARCHIVE, "vid_vsync", "0", "sync to vertical blank, prevents 'tearing' (seeing part of one frame and part of another on the screen at the same time), automatically disabled when doing timedemo benchmarks"};
+cvar_t vid_vsync = {CF_CLIENT | CF_ARCHIVE, "vid_vsync", "0", "sync to vertical blank, prevents 'tearing' (seeing part of one frame and part of another on the screen at the same time) at the cost of latency, 1 always syncs and -1 is adaptive (stops syncing if the framerate drops, unsupported by some platforms), automatically disabled when doing timedemo benchmarks"};
 cvar_t vid_mouse = {CF_CLIENT | CF_ARCHIVE, "vid_mouse", "1", "whether to use the mouse in windowed mode (fullscreen always does)"};
 cvar_t vid_mouse_clickthrough = {CF_CLIENT | CF_ARCHIVE, "vid_mouse_clickthrough", "0", "mouse behavior in windowed mode: 0 = click to focus, 1 = allow interaction even if the window is not focused (click-through behaviour, can be useful when using third-party game overlays)"};
+cvar_t vid_minimize_on_focus_loss = {CF_CLIENT | CF_ARCHIVE, "vid_minimize_on_focus_loss", "0", "whether to minimize the fullscreen window if it loses focus (such as by alt+tab)"};
 cvar_t vid_grabkeyboard = {CF_CLIENT | CF_ARCHIVE, "vid_grabkeyboard", "0", "whether to grab the keyboard when mouse is active (prevents use of volume control keys, music player keys, etc on some keyboards)"};
 cvar_t vid_minwidth = {CF_CLIENT, "vid_minwidth", "0", "minimum vid_width that is acceptable (to be set in default.cfg in mods)"};
 cvar_t vid_minheight = {CF_CLIENT, "vid_minheight", "0", "minimum vid_height that is acceptable (to be set in default.cfg in mods)"};
@@ -164,6 +164,8 @@ cvar_t vid_touchscreen_supportshowkeyboard = {CF_CLIENT | CF_READONLY, "vid_touc
 cvar_t vid_stick_mouse = {CF_CLIENT | CF_ARCHIVE, "vid_stick_mouse", "0", "have the mouse stuck in the center of the screen" };
 cvar_t vid_resizable = {CF_CLIENT | CF_ARCHIVE, "vid_resizable", "0", "0: window not resizable, 1: resizable, 2: window can be resized but the framebuffer isn't adjusted" };
 cvar_t vid_desktopfullscreen = {CF_CLIENT | CF_ARCHIVE, "vid_desktopfullscreen", "1", "force desktop resolution for fullscreen; also use some OS dependent tricks for better fullscreen integration"};
+cvar_t vid_display = {CF_CLIENT | CF_ARCHIVE, "vid_display", "0", "which monitor to render on, numbered from 0 (system default)" };
+cvar_t vid_info_displaycount = {CF_CLIENT | CF_READONLY, "vid_info_displaycount", "1", "how many monitors are currently available, updated by hotplug events" };
 #ifdef WIN32
 cvar_t vid_ignore_taskbar = {CF_CLIENT | CF_ARCHIVE, "vid_ignore_taskbar", "0", "in windowed mode, prevent the Windows taskbar and window borders from affecting the size and placement of the window. it will be aligned centered and uses the unaltered vid_width/vid_height values"};
 #endif
@@ -1275,7 +1277,6 @@ void VID_Shared_Init(void)
 	Cvar_RegisterVariable(&gl_info_renderer);
 	Cvar_RegisterVariable(&gl_info_version);
 	Cvar_RegisterVariable(&gl_info_extensions);
-	Cvar_RegisterVariable(&gl_info_platform);
 	Cvar_RegisterVariable(&gl_info_driver);
 	Cvar_RegisterVariable(&v_gamma);
 	Cvar_RegisterVariable(&v_brightness);
@@ -1312,6 +1313,7 @@ void VID_Shared_Init(void)
 	Cvar_RegisterVariable(&vid_vsync);
 	Cvar_RegisterVariable(&vid_mouse);
 	Cvar_RegisterVariable(&vid_mouse_clickthrough);
+	Cvar_RegisterVariable(&vid_minimize_on_focus_loss);
 	Cvar_RegisterVariable(&vid_grabkeyboard);
 	Cvar_RegisterVariable(&vid_touchscreen);
 	Cvar_RegisterVariable(&vid_touchscreen_showkeyboard);
@@ -1319,6 +1321,8 @@ void VID_Shared_Init(void)
 	Cvar_RegisterVariable(&vid_stick_mouse);
 	Cvar_RegisterVariable(&vid_resizable);
 	Cvar_RegisterVariable(&vid_desktopfullscreen);
+	Cvar_RegisterVariable(&vid_display);
+	Cvar_RegisterVariable(&vid_info_displaycount);
 #ifdef WIN32
 	Cvar_RegisterVariable(&vid_ignore_taskbar);
 #endif
@@ -1437,7 +1441,7 @@ static int VID_Mode(int fullscreen, int width, int height, int bpp, float refres
 		)
 			vid.sRGB2D = vid.sRGB3D = false;
 
-		Con_Printf("Video Mode: %s %dx%dx%dx%.2fhz%s\n", mode.fullscreen ? "fullscreen" : "window", mode.width, mode.height, mode.bitsperpixel, mode.refreshrate, mode.stereobuffer ? " stereo" : "");
+		Con_Printf("Video Mode: %s %dx%dx%dx%.2fhz%s on display %i\n", mode.fullscreen ? "fullscreen" : "window", mode.width, mode.height, mode.bitsperpixel, mode.refreshrate, mode.stereobuffer ? " stereo" : "", vid.displayindex);
 
 		Cvar_SetValueQuick(&vid_fullscreen, vid.mode.fullscreen);
 		Cvar_SetValueQuick(&vid_width, vid.mode.width);
@@ -1460,20 +1464,6 @@ static int VID_Mode(int fullscreen, int width, int height, int bpp, float refres
 		return false;
 }
 
-static void VID_OpenSystems(void)
-{
-	Key_ReleaseAll();
-	R_Modules_Start();
-	S_Startup();
-}
-
-static void VID_CloseSystems(void)
-{
-	S_Shutdown();
-	R_Modules_Shutdown();
-	Key_ReleaseAll();
-}
-
 qbool vid_commandlinecheck = true;
 extern qbool vid_opened;
 
@@ -1488,7 +1478,8 @@ void VID_Restart_f(cmd_state_t *cmd)
 	Con_Printf("VID_Restart: changing from %s %dx%dx%dbpp%s, to %s %dx%dx%dbpp%s.\n",
 		vid.mode.fullscreen ? "fullscreen" : "window", vid.mode.width, vid.mode.height, vid.mode.bitsperpixel, vid.mode.fullscreen && vid.mode.userefreshrate ? va(vabuf, sizeof(vabuf), "x%.2fhz", vid.mode.refreshrate) : "",
 		vid_fullscreen.integer ? "fullscreen" : "window", vid_width.integer, vid_height.integer, vid_bitsperpixel.integer, vid_fullscreen.integer && vid_userefreshrate.integer ? va(vabuf, sizeof(vabuf), "x%.2fhz", vid_refreshrate.value) : "");
-	VID_CloseSystems();
+	SCR_DeferLoadingPlaque(false);
+	R_Modules_Shutdown();
 	VID_Shutdown();
 	if (!VID_Mode(vid_fullscreen.integer, vid_width.integer, vid_height.integer, vid_bitsperpixel.integer, vid_refreshrate.value, vid_stereobuffer.integer))
 	{
@@ -1496,9 +1487,8 @@ void VID_Restart_f(cmd_state_t *cmd)
 		if (!VID_Mode(vid.mode.fullscreen, vid.mode.width, vid.mode.height, vid.mode.bitsperpixel, vid.mode.refreshrate, vid.mode.stereobuffer))
 			Sys_Error("Unable to restore to last working video mode");
 	}
-
-	SCR_DeferLoadingPlaque(false);
-	VID_OpenSystems();
+	R_Modules_Start();
+	Key_ReleaseAll();
 }
 
 const char *vidfallbacks[][2] =
@@ -1572,13 +1562,9 @@ void VID_Start(void)
 		if (!success)
 			Sys_Error("Video modes failed");
 	}
-	VID_OpenSystems();
-}
 
-void VID_Stop(void)
-{
-	VID_CloseSystems();
-	VID_Shutdown();
+	R_Modules_Start();
+	Key_ReleaseAll();
 }
 
 static int VID_SortModes_Compare(const void *a_, const void *b_)

@@ -24,7 +24,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 extern cvar_t cl_capturevideo;
 extern cvar_t cl_capturevideo_demo_stop;
 #endif
-int old_vsync = 0;
 
 static void CL_FinishTimeDemo (void);
 
@@ -586,6 +585,9 @@ static void CL_FinishTimeDemo (void)
 		else
 			host.state = host_shutdown;
 	}
+
+	// Might need to re-enable vsync
+	Cvar_Callback(&vid_vsync);
 }
 
 /*
@@ -618,6 +620,9 @@ void CL_TimeDemo_f(cmd_state_t *cmd)
 	cls.timedemo = host.restless = true;
 	cls.td_frames = -2;		// skip the first frame
 	cls.demonum = -1;		// stop demo loop
+
+	// Might need to disable vsync
+	Cvar_Callback(&vid_vsync);
 }
 
 /*
