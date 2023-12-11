@@ -1048,6 +1048,8 @@ typedef struct client_state_s
 
 	// time accumulated since an input packet was sent
 	float timesincepacket;
+	// how many optimally timed inputs we sent since we received an update from the server
+	uint8_t opt_inputs_since_update;
 
 	// movement parameters for client prediction
 	unsigned int moveflags;
@@ -1165,7 +1167,6 @@ extern cvar_t cl_anglespeedkey;
 extern cvar_t cl_autofire;
 
 extern cvar_t cl_shownet;
-extern cvar_t cl_nolerp;
 extern cvar_t cl_nettimesyncfactor;
 extern cvar_t cl_nettimesyncboundmode;
 extern cvar_t cl_nettimesyncboundtolerance;

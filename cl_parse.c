@@ -199,6 +199,13 @@ static void QW_CL_NextUpload_f(cmd_state_t *cmd);
 //static qbool QW_CL_IsUploading(void);
 static void QW_CL_StopUpload_f(cmd_state_t *cmd);
 
+static inline void CL_SetSignonStage_WithMsg(int signon_stage)
+{
+	cls.signon = signon_stage;
+	dpsnprintf(cl_connect_status, sizeof(cl_connect_status), "Connect: signon stage %i of %i", cls.signon, SIGNONS);
+	Con_DPrint(cl_connect_status);
+}
+
 /*
 ==================
 CL_ParseStartSoundPacket
@@ -614,7 +621,7 @@ static void QW_CL_RequestNextDownload(void)
 		// if we're still in signon stages, request the next one
 		if (cls.signon != SIGNONS)
 		{
-			cls.signon = SIGNONS-1;
+			CL_SetSignonStage_WithMsg(SIGNONS - 1);
 			// we'll go to SIGNONS when the first entity update is received
 			MSG_WriteByte(&cls.netcon->message, qw_clc_stringcmd);
 			MSG_WriteString(&cls.netcon->message, va(vabuf, sizeof(vabuf), "begin %i", cl.qw_servercount));
@@ -842,7 +849,7 @@ static void QW_CL_ParseModelList(void)
 		return;
 	}
 
-	cls.signon = 2;
+	CL_SetSignonStage_WithMsg(2);
 	cls.qw_downloadnumber = 0;
 	cls.qw_downloadtype = dl_model;
 	QW_CL_RequestNextDownload();
@@ -878,7 +885,7 @@ static void QW_CL_ParseSoundList(void)
 		return;
 	}
 
-	cls.signon = 2;
+	CL_SetSignonStage_WithMsg(2);
 	cls.qw_downloadnumber = 0;
 	cls.qw_downloadtype = dl_sound;
 	QW_CL_RequestNextDownload();
@@ -898,7 +905,7 @@ static void QW_CL_Changing_f(cmd_state_t *cmd)
 
 	S_StopAllSounds();
 	cl.intermission = 0;
-	cls.signon = 1;	// not active anymore, but not disconnected
+	CL_SetSignonStage_WithMsg(1); // not active anymore, but not disconnected
 	Con_Printf("\nChanging map...\n");
 }
 
@@ -1602,8 +1609,10 @@ CL_SignonReply
 An svc_signonnum has been received, perform a client side setup
 =====================
 */
-static void CL_SignonReply (void)
+static void CL_SignonReply(int signon_stage)
 {
+	CL_SetSignonStage_WithMsg(signon_stage);
+
 	Con_DPrintf("CL_SignonReply: %i\n", cls.signon);
 
 	switch (cls.signon)
@@ -1787,7 +1796,7 @@ static void CL_ParseServerInfo (void)
 		cl.loadfinished = false;
 
 		cls.state = ca_connected;
-		cls.signon = 1;
+		CL_SetSignonStage_WithMsg(1);
 
 		// note: on QW protocol we can't set up the gameworld until after
 		// downloads finish...
@@ -3281,9 +3290,10 @@ extern cvar_t host_timescale;
 extern cvar_t cl_lerpexcess;
 static void CL_NetworkTimeReceived(double newtime)
 {
+	cl.opt_inputs_since_update = 0;
 	cl.mtime[1] = cl.mtime[0];
 	cl.mtime[0] = newtime;
-	if (cl_nolerp.integer || cls.timedemo || cl.mtime[1] == cl.mtime[0] || cls.signon < SIGNONS)
+	if (cls.timedemo || cl.mtime[1] == cl.mtime[0] || cls.signon < SIGNONS)
 		cl.time = cl.mtime[1] = newtime;
 	else if (cls.demoplayback)
 	{
@@ -3306,27 +3316,32 @@ static void CL_NetworkTimeReceived(double newtime)
 				Con_DPrintf("--- cl.time > cl.mtime[0] (%f > %f ... %f)\n", cl.time, cl.mtime[1], cl.mtime[0]);
 		}
 
-		if (cl_nettimesyncboundmode.integer < 4)
+selectmode:
+		switch (cl_nettimesyncboundmode.integer)
 		{
+		default:
+			Cvar_SetQuick(&cl_nettimesyncboundmode, cl_nettimesyncboundmode.defstring);
+			goto selectmode;
+		case 1:
+		case 2:
+		case 3:
 			// doesn't make sense for modes > 3
 			cl.time += (cl.mtime[1] - cl.time) * bound(0, cl_nettimesyncfactor.value, 1);
 			timehigh = cl.mtime[1] + (cl.mtime[0] - cl.mtime[1]) * cl_nettimesyncboundtolerance.value;
-		}
-
-		switch (cl_nettimesyncboundmode.integer)
-		{
-		case 1:
-			cl.time = bound(cl.mtime[1], cl.time, cl.mtime[0]);
-			break;
-
-		case 2:
-			if (cl.time < cl.mtime[1] || cl.time > timehigh)
-				cl.time = cl.mtime[1];
-			break;
-
-		case 3:
-			if ((cl.time < cl.mtime[1] && cl.oldtime < cl.mtime[1]) || (cl.time > timehigh && cl.oldtime > timehigh))
-				cl.time = cl.mtime[1];
+			switch (cl_nettimesyncboundmode.integer)
+			{
+			case 1:
+				cl.time = bound(cl.mtime[1], cl.time, cl.mtime[0]);
+				break;
+			case 2:
+				if (cl.time < cl.mtime[1] || cl.time > timehigh)
+					cl.time = cl.mtime[1];
+				break;
+			case 3:
+				if ((cl.time < cl.mtime[1] && cl.oldtime < cl.mtime[1]) || (cl.time > timehigh && cl.oldtime > timehigh))
+					cl.time = cl.mtime[1];
+				break;
+			}
 			break;
 
 		case 4:
@@ -3767,20 +3782,14 @@ void CL_ParseServerMessage(void)
 				EntityFrameQW_CL_ReadFrame(false);
 				// first update is the final signon stage
 				if (cls.signon == SIGNONS - 1)
-				{
-					cls.signon = SIGNONS;
-					CL_SignonReply ();
-				}
+					CL_SignonReply(SIGNONS);
 				break;
 
 			case qw_svc_deltapacketentities:
 				EntityFrameQW_CL_ReadFrame(true);
 				// first update is the final signon stage
 				if (cls.signon == SIGNONS - 1)
-				{
-					cls.signon = SIGNONS;
-					CL_SignonReply ();
-				}
+					CL_SignonReply(SIGNONS);
 				break;
 
 			case qw_svc_maxspeed:
@@ -3840,11 +3849,8 @@ void CL_ParseServerMessage(void)
 				cmdlogname[cmdindex] = temp;
 				SHOWNET("fast update");
 				if (cls.signon == SIGNONS - 1)
-				{
 					// first update is the final signon stage
-					cls.signon = SIGNONS;
-					CL_SignonReply ();
-				}
+					CL_SignonReply(SIGNONS);
 				EntityFrameQuake_ReadEntity (cmd&127);
 				continue;
 			}
@@ -4135,8 +4141,7 @@ void CL_ParseServerMessage(void)
 				// reconnect somehow, so allow signon 1 even if at signon 1
 				if (i <= cls.signon && i != 1)
 					Host_Error ("Received signon %i when at %i", i, cls.signon);
-				cls.signon = i;
-				CL_SignonReply ();
+				CL_SignonReply(i);
 				break;
 
 			case svc_killedmonster:
@@ -4240,11 +4245,8 @@ void CL_ParseServerMessage(void)
 				break;
 			case svc_entities:
 				if (cls.signon == SIGNONS - 1)
-				{
 					// first update is the final signon stage
-					cls.signon = SIGNONS;
-					CL_SignonReply ();
-				}
+					CL_SignonReply(SIGNONS);
 				if (cls.protocol == PROTOCOL_DARKPLACES1 || cls.protocol == PROTOCOL_DARKPLACES2 || cls.protocol == PROTOCOL_DARKPLACES3)
 					EntityFrame_CL_ReadFrame();
 				else if (cls.protocol == PROTOCOL_DARKPLACES4)

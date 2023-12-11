@@ -201,7 +201,8 @@ OPTIM_DEBUG=$(CPUOPTIMIZATIONS)
 #OPTIM_RELEASE=-O2 -fno-strict-aliasing -funroll-loops $(CPUOPTIMIZATIONS)
 #OPTIM_RELEASE=-O2 -fno-strict-aliasing $(CPUOPTIMIZATIONS)
 #OPTIM_RELEASE=-O3 -fno-strict-aliasing $(CPUOPTIMIZATIONS)
-OPTIM_RELEASE=-O3 -fno-strict-aliasing -fno-math-errno -fno-trapping-math $(CPUOPTIMIZATIONS)
+#OPTIM_RELEASE=-O3 -fno-strict-aliasing -fno-math-errno -fno-trapping-math $(CPUOPTIMIZATIONS)
+OPTIM_RELEASE=-O3 -fno-math-errno -fno-trapping-math $(CPUOPTIMIZATIONS)
 # NOTE: *never* *ever* use the -ffast-math or -funsafe-math-optimizations flag
 # Also, since gcc 5, -ffinite-math-only makes NaN and zero compare equal inside engine code but not inside QC, which causes error spam for seemingly valid QC code like if (x != 0) return 1 / x;
 
@@ -209,9 +210,13 @@ DO_CC=$(CC) $(CFLAGS) -c $< -o $@
 
 
 # Link
-LDFLAGS_DEBUG=-g -ggdb $(OPTIM_DEBUG) -DSVNREVISION=`{ test -d .svn && svnversion; } || { test -d .git && git describe --always; } || echo -` -DBUILDTYPE=debug
-LDFLAGS_PROFILE=-g -pg -fprofile-arcs $(OPTIM_RELEASE) -DSVNREVISION=`{ test -d .svn && svnversion; } || { test -d .git && git describe --always; } || echo -` -DBUILDTYPE=profile
-LDFLAGS_RELEASE=$(OPTIM_RELEASE) -DSVNREVISION=`{ test -d .svn && svnversion; } || { test -d .git && git describe --always; } || echo -` -DBUILDTYPE=release
+
+# not checking for .git directory before running `git describe` because that would stop it working in a subdirectory
+VCREVISION=$(shell { test -d .svn && svnversion; } || git describe --always --dirty='~' 2>/dev/null || echo -)
+
+LDFLAGS_DEBUG=-g -ggdb $(OPTIM_DEBUG)                  -DVCREVISION=$(VCREVISION) -DBUILDTYPE=debug
+LDFLAGS_PROFILE=-g -pg -fprofile-arcs $(OPTIM_RELEASE) -DVCREVISION=$(VCREVISION) -DBUILDTYPE=profile
+LDFLAGS_RELEASE=$(OPTIM_RELEASE)                       -DVCREVISION=$(VCREVISION) -DBUILDTYPE=release
 
 
 ##### UNIX specific variables #####

@@ -104,7 +104,7 @@ cvar_t cl_minfps_qualityhysteresis = {CF_CLIENT | CF_ARCHIVE, "cl_minfps_quality
 cvar_t cl_minfps_qualitystepmax = {CF_CLIENT | CF_ARCHIVE, "cl_minfps_qualitystepmax", "0.1", "maximum quality change in a single frame"};
 cvar_t cl_minfps_force = {CF_CLIENT, "cl_minfps_force", "0", "also apply quality reductions in timedemo/capturevideo"};
 cvar_t cl_maxfps = {CF_CLIENT | CF_ARCHIVE, "cl_maxfps", "0", "maximum fps cap, 0 = unlimited, if game is running faster than this it will wait before running another frame (useful to make cpu time available to other programs)"};
-cvar_t cl_maxfps_alwayssleep = {CF_CLIENT | CF_ARCHIVE, "cl_maxfps_alwayssleep","1", "gives up some processing time to other applications each frame, value in milliseconds, disabled if cl_maxfps is 0"};
+cvar_t cl_maxfps_alwayssleep = {CF_CLIENT | CF_ARCHIVE, "cl_maxfps_alwayssleep", "0", "gives up some processing time to other applications each frame, value in milliseconds, disabled if a timedemo is running"};
 cvar_t cl_maxidlefps = {CF_CLIENT | CF_ARCHIVE, "cl_maxidlefps", "20", "maximum fps cap when the game is not the active window (makes cpu time available to other programs"};
 
 cvar_t cl_areagrid_link_SOLID_NOT = {CF_CLIENT, "cl_areagrid_link_SOLID_NOT", "1", "set to 0 to prevent SOLID_NOT entities from being linked to the area grid, and unlink any that are already linked (in the code paths that would otherwise link them), for better performance"};
@@ -447,10 +447,14 @@ void CL_DisconnectEx(qbool kicked, const char *fmt, ... )
 
 		NetConn_Close(cls.netcon);
 		cls.netcon = NULL;
-		if(fmt)
-			Con_Printf("Disconnect: %s\n", reason);
+
+		// It's possible for a server to disconnect a player with an empty reason
+		// which is checked here rather than above so we don't print "Disconnect by user".
+		if(fmt && reason[0] != '\0')
+			dpsnprintf(cl_connect_status, sizeof(cl_connect_status), "Disconnect: %s", reason);
 		else
-			Con_Printf("Disconnected\n");
+			strlcpy(cl_connect_status, "Disconnected", sizeof(cl_connect_status));
+		Con_Printf("%s\n", cl_connect_status);
 	}
 	cls.state = ca_disconnected;
 	cl.islocalgame = false;
@@ -492,7 +496,7 @@ static void CL_Reconnect_f(cmd_state_t *cmd)
 		if (temp[0])
 			CL_EstablishConnection(temp, -1);
 		else
-			Con_Printf("Reconnect to what server?  (you have not connected to a server yet)\n");
+			Con_Printf(CON_WARN "Reconnect to what server?  (you have not connected to a server yet)\n");
 		return;
 	}
 	// if connected, do something based on protocol
@@ -572,18 +576,13 @@ void CL_EstablishConnection(const char *address, int firstarg)
 	if (Sys_CheckParm("-benchmark"))
 		return;
 
-	// clear menu's connect error message
-#ifdef CONFIG_MENU
-	M_Update_Return_Reason("");
-#endif
-
 	// make sure the client ports are open before attempting to connect
 	NetConn_UpdateSockets();
 
 	if (LHNETADDRESS_FromString(&cls.connect_address, address, 26000) && (cls.connect_mysocket = NetConn_ChooseClientSocketForAddress(&cls.connect_address)))
 	{
 		cls.connect_trying = true;
-		cls.connect_remainingtries = 3;
+		cls.connect_remainingtries = 10;
 		cls.connect_nextsendtime = 0;
 
 		// only NOW, set connect_userinfo
@@ -601,17 +600,13 @@ void CL_EstablishConnection(const char *address, int firstarg)
 			*cls.connect_userinfo = 0;
 		}
 
-#ifdef CONFIG_MENU
-		M_Update_Return_Reason("Trying to connect...");
-#endif
+		strlcpy(cl_connect_status, "Connect: pending...", sizeof(cl_connect_status));
 		SCR_BeginLoadingPlaque(false);
 	}
 	else
 	{
-		Con_Print("Unable to find a suitable network socket to connect to server.\n");
-#ifdef CONFIG_MENU
-		M_Update_Return_Reason("No network");
-#endif
+		Con_Printf(CON_ERROR "Connect: failed, unable to find a network socket suitable to reach %s\n", address);
+		strlcpy(cl_connect_status, "Connect: failed, no network", sizeof(cl_connect_status));
 	}
 }
 
@@ -1175,6 +1170,7 @@ static void CL_UpdateNetworkEntity(entity_t *e, int recursionlimit, qbool interp
 	// someone or watching a cutscene of some sort
 	if (cl_nolerp.integer || cls.timedemo)
 		interpolate = false;
+
 	if (e == cl.entities + cl.playerentity && cl.movement_predicted && (!cl.fixangle[1] || !cl.fixangle[0]))
 	{
 		VectorCopy(cl.movement_origin, origin);
@@ -2802,13 +2798,14 @@ void CL_StartVideo(void)
 
 extern cvar_t host_framerate;
 extern cvar_t host_speeds;
-
+extern qbool serverlist_querystage;
 double CL_Frame (double time)
 {
 	static double clframetime;
 	static double cl_timer = 0;
 	static double time1 = 0, time2 = 0, time3 = 0;
 	int pass1, pass2, pass3;
+	float maxfps;
 
 	CL_VM_PreventInformationLeaks();
 
@@ -2824,7 +2821,11 @@ double CL_Frame (double time)
 	if (cl_timer > 0.1)
 		cl_timer = 0.1;
 
-	if (cls.state != ca_dedicated && (cl_timer > 0 || cls.timedemo || ((vid_activewindow ? cl_maxfps : cl_maxidlefps).value < 1)))
+	// Run at full speed when querying servers, compared to waking up early to parse
+	// this is simpler and gives pings more representative of what can be expected when playing.
+	maxfps = (vid_activewindow || serverlist_querystage ? cl_maxfps : cl_maxidlefps).value;
+
+	if (cls.state != ca_dedicated && (cl_timer > 0 || cls.timedemo || maxfps <= 0))
 	{
 		R_TimeReport("---");
 		Collision_Cache_NewFrame();
@@ -2833,7 +2834,6 @@ double CL_Frame (double time)
 		// decide the simulation time
 		if (cls.capturevideo.active)
 		{
-			//***
 			if (cls.capturevideo.realtime)
 				clframetime = cl.realframetime = max(time, 1.0 / cls.capturevideo.framerate);
 			else
@@ -2842,21 +2842,19 @@ double CL_Frame (double time)
 				cl.realframetime = max(time, clframetime);
 			}
 		}
-		else if (vid_activewindow && cl_maxfps.value >= 1 && !cls.timedemo)
-
-#else
-		if (vid_activewindow && cl_maxfps.value >= 1 && !cls.timedemo)
+		else
 #endif
 		{
-			clframetime = cl.realframetime = max(cl_timer, 1.0 / cl_maxfps.value);
-			// when running slow, we need to sleep to keep input responsive
-			if (cl_maxfps_alwayssleep.value > 0)
-				Sys_Sleep((int)bound(0, cl_maxfps_alwayssleep.value * 1000, 100000));
+			if (maxfps <= 0 || cls.timedemo)
+				clframetime = cl.realframetime = cl_timer;
+			else
+				// networking assumes at least 10fps
+				clframetime = cl.realframetime = bound(cl_timer, 1 / maxfps, 0.1);
+
+			// on some legacy systems, we need to sleep to keep input responsive
+			if (cl_maxfps_alwayssleep.value > 0 && !cls.timedemo)
+				Sys_Sleep(min(cl_maxfps_alwayssleep.value / 1000, 0.05));
 		}
-		else if (!vid_activewindow && cl_maxidlefps.value >= 1 && !cls.timedemo)
-			clframetime = cl.realframetime = max(cl_timer, 1.0 / cl_maxidlefps.value);
-		else
-			clframetime = cl.realframetime = cl_timer;
 
 		// apply slowmo scaling
 		clframetime *= cl.movevars_timescale;

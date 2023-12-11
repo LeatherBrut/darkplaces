@@ -133,6 +133,9 @@ void Host_Error (const char *error, ...)
 	if (cls.state == ca_dedicated)
 		Sys_Error ("Host_Error: %s",hosterrorstring2);	// dedicated servers exit
 
+	// prevent an endless loop if the error was triggered by a command
+	Cbuf_Clear(cmd_local->cbuf);
+
 	CL_Disconnect();
 	cls.demonum = -1;
 
@@ -156,7 +159,7 @@ static void Host_Quit_f(cmd_state_t *cmd)
 
 static void Host_Version_f(cmd_state_t *cmd)
 {
-	Con_Printf("Version: %s build %s\n", gamename, buildstring);
+	Con_Printf("Version: %s\n", engineversion);
 }
 
 static void Host_Framerate_c(cvar_t *var)
@@ -365,7 +368,6 @@ Host_Init
 static void Host_Init (void)
 {
 	int i;
-	const char* os;
 	char vabuf[1024];
 
 	host.hook.ConnectLocal = NULL;
@@ -445,8 +447,7 @@ static void Host_Init (void)
 	FS_Init();
 
 	// construct a version string for the corner of the console
-	os = DP_OS_NAME;
-	dpsnprintf (engineversion, sizeof (engineversion), "%s %s %s", gamename, os, buildstring);
+	dpsnprintf (engineversion, sizeof (engineversion), "%s %s%s, buildstring: %s", gamename, DP_OS_NAME, cls.state == ca_dedicated ? " dedicated" : "", buildstring);
 	Con_Printf("%s\n", engineversion);
 
 	// initialize process nice level
@@ -666,43 +667,6 @@ static double Host_Frame(double time)
 		return min(cl_wait, sv_wait); // listen server or singleplayer
 }
 
-static inline double Host_Sleep(double time)
-{
-	double delta, time0;
-
-	// convert to microseconds
-	time *= 1000000.0;
-
-	if (time < 1 || host.restless)
-		return 0; // not sleeping this frame
-
-	if(host_maxwait.value <= 0)
-		time = min(time, 1000000.0);
-	else
-		time = min(time, host_maxwait.value * 1000.0);
-
-	time0 = Sys_DirtyTime();
-	if (sv_checkforpacketsduringsleep.integer && !sys_usenoclockbutbenchmark.integer && !svs.threaded) {
-		NetConn_SleepMicroseconds((int)time);
-		if (cls.state != ca_dedicated)
-			NetConn_ClientFrame(); // helps server browser get good ping values
-		// TODO can we do the same for ServerFrame? Probably not.
-	}
-	else
-	{
-		if (cls.state != ca_dedicated)
-			Curl_Select(&time);
-		Sys_Sleep((int)time);
-	}
-
-	delta = Sys_DirtyTime() - time0;
-	if (delta < 0 || delta >= 1800)
-		delta = 0;
-
-//	R_TimeReport("sleep");
-	return delta;
-}
-
 // Cloudwalk: Most overpowered function declaration...
 static inline double Host_UpdateTime (double newtime, double oldtime)
 {
@@ -745,13 +709,12 @@ void Host_Main(void)
 
 		host.dirtytime = Sys_DirtyTime();
 		host.realtime += time = Host_UpdateTime(host.dirtytime, oldtime);
+		oldtime = host.dirtytime;
 
 		sleeptime = Host_Frame(time);
-		oldtime = host.dirtytime;
 		++host.framecount;
-
 		sleeptime -= Sys_DirtyTime() - host.dirtytime; // execution time
-		host.sleeptime = Host_Sleep(sleeptime);
+		host.sleeptime = Sys_Sleep(sleeptime);
 	}
 
 	return;

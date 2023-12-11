@@ -440,7 +440,7 @@ resortserverlist
 static void VM_M_resortserverlist(prvm_prog_t *prog)
 {
 	VM_SAFEPARMCOUNT(0, VM_M_resortserverlist);
-	ServerList_RebuildViewList();
+	ServerList_RebuildViewList(NULL);
 }
 
 /*
@@ -467,7 +467,7 @@ static void VM_M_getserverliststring(prvm_prog_t *prog)
 	}
 	else
 	{
-		if(hostnr < 0 || hostnr >= serverlist_viewcount)
+		if(hostnr < 0 || (unsigned)hostnr >= serverlist_viewcount)
 		{
 			Con_Print("VM_M_getserverliststring: bad hostnr passed!\n");
 			return;
@@ -532,7 +532,7 @@ static void VM_M_getserverlistnumber(prvm_prog_t *prog)
 	}
 	else
 	{
-		if(hostnr < 0 || hostnr >= serverlist_viewcount)
+		if(hostnr < 0 || (unsigned)hostnr >= serverlist_viewcount)
 		{
 			Con_Print("VM_M_getserverliststring: bad hostnr passed!\n");
 			return;
@@ -556,7 +556,8 @@ static void VM_M_getserverlistnumber(prvm_prog_t *prog)
 			PRVM_G_FLOAT( OFS_RETURN ) = cache->info.freeslots;
 			break;
 		case SLIF_PING:
-			PRVM_G_FLOAT( OFS_RETURN ) = cache->info.ping;
+			// display inf when a listed server times out and net_slist_pause blocks its removal
+			PRVM_G_FLOAT( OFS_RETURN ) = cache->info.ping ?: INFINITY;
 			break;
 		case SLIF_PROTOCOL:
 			PRVM_G_FLOAT( OFS_RETURN ) = cache->info.protocol;
