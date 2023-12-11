@@ -17,12 +17,13 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 */
-
+// https://developer.valvesoftware.com/wiki/BSP_(Source)#Textures
 #ifndef MODEL_VBSP_H
 #define MODEL_VBSP_H
 
 #include "qtypes.h"
 #include "qdefs.h"
+#include <stdint.h>
 
 /*
  * The Valve BSP format, used by Source engine, has some interesting
@@ -163,7 +164,7 @@ typedef struct hl2dheader_s
 
 typedef struct hl2dplane_s
 {
-	Vector	normal;
+	Vector		normal;
 	float		dist;
 	int			type;
 } hl2dplane_t;
@@ -234,6 +235,22 @@ typedef struct hl2dnode_s
 	short		padding;
 } hl2dnode_t;
 
+
+typedef struct hl2dleaf_S
+{
+	int		contents;
+	short	cluster;
+	short	area:3;
+	short	flags:7;
+	short	mins[3];
+	short	maxs[3];
+	unsigned short
+	unsigned short
+	unsigned short
+	unsigned short
+
+
+}hl2dleaf_t;
 
 
 
