@@ -33,9 +33,9 @@ cvar_state_t cvars_null;
 Cvar_FindVar
 ============
 */
-cvar_t *Cvar_FindVar(cvar_state_t *cvars, const char *var_name, int neededflags)
+cvar_t *Cvar_FindVar(cvar_state_t *cvars, const char *var_name, unsigned neededflags)
 {
-	int hashindex;
+	unsigned hashindex;
 	cvar_hash_t *hash;
 
 	// use hash lookup to minimize search time
@@ -50,7 +50,7 @@ cvar_t *Cvar_FindVar(cvar_state_t *cvars, const char *var_name, int neededflags)
 	return NULL;
 }
 
-cvar_t *Cvar_FindVarAfter(cvar_state_t *cvars, const char *prev_var_name, int neededflags)
+cvar_t *Cvar_FindVarAfter(cvar_state_t *cvars, const char *prev_var_name, unsigned neededflags)
 {
 	cvar_t *var;
 
@@ -74,37 +74,44 @@ cvar_t *Cvar_FindVarAfter(cvar_state_t *cvars, const char *prev_var_name, int ne
 	return var;
 }
 
-static cvar_t *Cvar_FindVarLink(cvar_state_t *cvars, const char *var_name, cvar_t **parent, cvar_t ***link, cvar_t **prev_alpha, int neededflags)
+/**
+ * Returns a pointer to the pointer stored in hashtable[] (or the one it links to)
+ * because we'll need to update that when deleting a cvar as other cvar(s) may share its hashindex.
+ */
+static cvar_hash_t **Cvar_FindVarLink(cvar_state_t *cvars, const char *var_name, cvar_t **parent, cvar_t ***link, cvar_t **prev_alpha, unsigned neededflags)
 {
-	int hashindex;
-	cvar_hash_t *hash;
+	unsigned hashindex;
+	cvar_t *cvar;
+	cvar_hash_t **hashlinkptr;
 
 	// use hash lookup to minimize search time
 	hashindex = CRC_Block((const unsigned char *)var_name, strlen(var_name)) % CVAR_HASHSIZE;
 	if(parent) *parent = NULL;
 	if(prev_alpha) *prev_alpha = NULL;
 	if(link) *link = &cvars->hashtable[hashindex]->cvar;
-	for (hash = cvars->hashtable[hashindex];hash;hash = hash->next)
+	hashlinkptr = &cvars->hashtable[hashindex];
+	for (hashlinkptr = &cvars->hashtable[hashindex]; *hashlinkptr; hashlinkptr = &(*hashlinkptr)->next)
 	{
-		if (!strcmp (var_name, hash->cvar->name) && (hash->cvar->flags & neededflags))
+		cvar = (*hashlinkptr)->cvar;
+		if (!strcmp (var_name, cvar->name) && (cvar->flags & neededflags))
 			goto match;
 		else
-			for (char **alias = hash->cvar->aliases; alias && *alias; alias++)
-				if (!strcmp (var_name, *alias) && (hash->cvar->flags & neededflags))
+			for (char **alias = cvar->aliases; alias && *alias; alias++)
+				if (!strcmp (var_name, *alias) && (cvar->flags & neededflags))
 					goto match;
-		if(parent) *parent = hash->cvar;
+		if(parent) *parent = cvar;
 	}
 	return NULL;
 match:
-	if(!prev_alpha || hash->cvar == cvars->vars)
-		return hash->cvar;
+	if(!prev_alpha || cvar == cvars->vars)
+		return hashlinkptr;
 
 	*prev_alpha = cvars->vars;
 	// if prev_alpha happens to become NULL then there has been some inconsistency elsewhere
 	// already - should I still insert '*prev_alpha &&' in the loop?
-	while((*prev_alpha)->next != hash->cvar)
+	while((*prev_alpha)->next != cvar)
 		*prev_alpha = (*prev_alpha)->next;
-	return hash->cvar;
+	return hashlinkptr;
 }
 
 /*
@@ -112,7 +119,7 @@ match:
 Cvar_VariableValue
 ============
 */
-float Cvar_VariableValueOr(cvar_state_t *cvars, const char *var_name, float def, int neededflags)
+float Cvar_VariableValueOr(cvar_state_t *cvars, const char *var_name, float def, unsigned neededflags)
 {
 	cvar_t *var;
 
@@ -122,7 +129,7 @@ float Cvar_VariableValueOr(cvar_state_t *cvars, const char *var_name, float def,
 	return atof (var->string);
 }
 
-float Cvar_VariableValue(cvar_state_t *cvars, const char *var_name, int neededflags)
+float Cvar_VariableValue(cvar_state_t *cvars, const char *var_name, unsigned neededflags)
 {
 	return Cvar_VariableValueOr(cvars, var_name, 0, neededflags);
 }
@@ -132,7 +139,7 @@ float Cvar_VariableValue(cvar_state_t *cvars, const char *var_name, int neededfl
 Cvar_VariableString
 ============
 */
-const char *Cvar_VariableStringOr(cvar_state_t *cvars, const char *var_name, const char *def, int neededflags)
+const char *Cvar_VariableStringOr(cvar_state_t *cvars, const char *var_name, const char *def, unsigned neededflags)
 {
 	cvar_t *var;
 
@@ -142,7 +149,7 @@ const char *Cvar_VariableStringOr(cvar_state_t *cvars, const char *var_name, con
 	return var->string;
 }
 
-const char *Cvar_VariableString(cvar_state_t *cvars, const char *var_name, int neededflags)
+const char *Cvar_VariableString(cvar_state_t *cvars, const char *var_name, unsigned neededflags)
 {
 	return Cvar_VariableStringOr(cvars, var_name, cvar_null_string, neededflags);
 }
@@ -152,7 +159,7 @@ const char *Cvar_VariableString(cvar_state_t *cvars, const char *var_name, int n
 Cvar_VariableDefString
 ============
 */
-const char *Cvar_VariableDefString(cvar_state_t *cvars, const char *var_name, int neededflags)
+const char *Cvar_VariableDefString(cvar_state_t *cvars, const char *var_name, unsigned neededflags)
 {
 	cvar_t *var;
 
@@ -167,7 +174,7 @@ const char *Cvar_VariableDefString(cvar_state_t *cvars, const char *var_name, in
 Cvar_VariableDescription
 ============
 */
-const char *Cvar_VariableDescription(cvar_state_t *cvars, const char *var_name, int neededflags)
+const char *Cvar_VariableDescription(cvar_state_t *cvars, const char *var_name, unsigned neededflags)
 {
 	cvar_t *var;
 
@@ -183,7 +190,7 @@ const char *Cvar_VariableDescription(cvar_state_t *cvars, const char *var_name, 
 Cvar_CompleteVariable
 ============
 */
-const char *Cvar_CompleteVariable(cvar_state_t *cvars, const char *partial, int neededflags)
+const char *Cvar_CompleteVariable(cvar_state_t *cvars, const char *partial, unsigned neededflags)
 {
 	cvar_t		*cvar;
 	size_t		len;
@@ -210,7 +217,7 @@ const char *Cvar_CompleteVariable(cvar_state_t *cvars, const char *partial, int 
 	Thanks to Fett erich@heintz.com
 
 */
-int Cvar_CompleteCountPossible(cvar_state_t *cvars, const char *partial, int neededflags)
+int Cvar_CompleteCountPossible(cvar_state_t *cvars, const char *partial, unsigned neededflags)
 {
 	cvar_t	*cvar;
 	size_t	len;
@@ -243,7 +250,7 @@ int Cvar_CompleteCountPossible(cvar_state_t *cvars, const char *partial, int nee
 	Thanks to taniwha
 
 */
-const char **Cvar_CompleteBuildList(cvar_state_t *cvars, const char *partial, int neededflags)
+const char **Cvar_CompleteBuildList(cvar_state_t *cvars, const char *partial, unsigned neededflags)
 {
 	const cvar_t *cvar;
 	size_t len = 0;
@@ -281,7 +288,7 @@ void Cvar_PrintHelp(cvar_t *cvar, const char *name, qbool full)
 }
 
 // written by LadyHavoc
-void Cvar_CompleteCvarPrint(cvar_state_t *cvars, const char *partial, int neededflags)
+void Cvar_CompleteCvarPrint(cvar_state_t *cvars, const char *partial, unsigned neededflags)
 {
 	cvar_t *cvar;
 	size_t len = strlen(partial);
@@ -368,7 +375,7 @@ void Cvar_Callback(cvar_t *var)
 {
 	if (var == NULL)
 	{
-		Con_Print("Cvar_Callback: var == NULL\n");
+		Con_Print(CON_WARN "Cvar_Callback: var == NULL\n");
 		return;
 	}
 
@@ -432,7 +439,7 @@ void Cvar_SetQuick (cvar_t *var, const char *value)
 {
 	if (var == NULL)
 	{
-		Con_Print("Cvar_SetQuick: var == NULL\n");
+		Con_Print(CON_WARN "Cvar_SetQuick: var == NULL\n");
 		return;
 	}
 
@@ -454,7 +461,7 @@ void Cvar_Set(cvar_state_t *cvars, const char *var_name, const char *value)
 	var = Cvar_FindVar(cvars, var_name, ~0);
 	if (var == NULL)
 	{
-		Con_Printf("Cvar_Set: variable %s not found\n", var_name);
+		Con_Printf(CON_WARN "Cvar_Set: variable %s not found\n", var_name);
 		return;
 	}
 	Cvar_SetQuick(var, value);
@@ -491,9 +498,17 @@ void Cvar_RegisterCallback(cvar_t *variable, void (*callback)(cvar_t *))
 {
 	if (variable == NULL)
 	{
-		Con_Print("Cvar_RegisterCallback: var == NULL\n");
+		Con_Print(CON_WARN "Cvar_RegisterCallback: var == NULL\n");
 		return;
 	}
+
+	if (!(variable->flags & cmd_local->cvars_flagsmask))
+	{
+		if (developer_extra.integer)
+			Con_DPrintf("^6Cvar_RegisterCallback: rejecting cvar \"%s\"\n", variable->name);
+		return;
+	}
+
 	variable->callback = callback;
 }
 
@@ -501,10 +516,14 @@ void Cvar_RegisterVirtual(cvar_t *variable, const char *name )
 {
 	cvar_state_t *cvars = &cvars_all;
 	cvar_hash_t *hash;
-	int hashindex;
+	unsigned hashindex;
 
-	if (cls.state == ca_dedicated && !(variable->flags & CF_SERVER))
+	if (!(variable->flags & cmd_local->cvars_flagsmask))
+	{
+		if (developer_extra.integer)
+			Con_DPrintf("^6Cvar_RegisterVirtual: rejecting cvar \"%s\" alias \"%s\"\n", variable->name, name);
 		return;
+	}
 
 	if(!*name)
 	{
@@ -551,7 +570,7 @@ static void Cvar_Link(cvar_t *variable, cvar_state_t *cvars)
 {
 	cvar_t *current, *next;
 	cvar_hash_t *hash;
-	int hashindex;
+	unsigned hashindex;
 	/*
 	 * Link the variable in
 	 * alphanumerical order
@@ -581,25 +600,15 @@ Adds a freestanding variable to the variable list.
 */
 void Cvar_RegisterVariable (cvar_t *variable)
 {
-	cvar_state_t *cvars = NULL;
+	cvar_state_t *cvars = &cvars_all;
 	cvar_t *current, *cvar;
 	int i;
 
-	switch (variable->flags & (CF_CLIENT | CF_SERVER))
+	if (!(variable->flags & cmd_local->cvars_flagsmask))
 	{
-	case CF_CLIENT: // client-only cvar
-		if (cls.state == ca_dedicated)
-			return;
-	case CF_SERVER:
-	case CF_CLIENT | CF_SERVER:
-		cvars = &cvars_all;
-		break;
-	case 0:
-		Sys_Error("Cvar_RegisterVariable({\"%s\", \"%s\", %i}) with no CF_CLIENT | CF_SERVER flags\n", variable->name, variable->string, variable->flags);
-		break;
-	default:
-		Sys_Error("Cvar_RegisterVariable({\"%s\", \"%s\", %i}) with weird CF_CLIENT | CF_SERVER flags\n", variable->name, variable->string, variable->flags);
-		break;
+		if (developer_extra.integer)
+			Con_DPrintf("^2Cvar_RegisterVariable: rejecting cvar \"%s\"\n", variable->name);
+		return;
 	}
 
 	if (developer_extra.integer)
@@ -654,7 +663,7 @@ void Cvar_RegisterVariable (cvar_t *variable)
 	// check for overlap with a command
 	if (Cmd_Exists(cmd_local, variable->name))
 	{
-		Con_Printf("Cvar_RegisterVariable: %s is a command\n", variable->name);
+		Con_Printf(CON_WARN "Cvar_RegisterVariable: %s is a command\n", variable->name);
 		return;
 	}
 
@@ -715,14 +724,14 @@ cvar_t *Cvar_Get(cvar_state_t *cvars, const char *name, const char *value, int f
 	// check for pure evil
 	if (!*name)
 	{
-		Con_Printf("Cvar_Get: invalid variable name\n");
+		Con_Printf(CON_WARN "Cvar_Get: invalid variable name\n");
 		return NULL;
 	}
 
 	// check for overlap with a command
 	if (Cmd_Exists(cmd_local, name))
 	{
-		Con_Printf("Cvar_Get: %s is a command\n", name);
+		Con_Printf(CON_WARN "Cvar_Get: %s is a command\n", name);
 		return NULL;
 	}
 
@@ -758,10 +767,10 @@ qbool Cvar_Readonly (cvar_t *var, const char *cmd_name)
 {
 	if (var->flags & CF_READONLY)
 	{
+		Con_Print(CON_WARN);
 		if(cmd_name)
 			Con_Printf("%s: ",cmd_name);
-		Con_Printf("%s", var->name);
-		Con_Printf(" is read-only\n");
+		Con_Printf("%s is read-only\n", var->name);
 		return true;
 	}
 	return false;
@@ -845,7 +854,7 @@ void Cvar_SaveInitState(cvar_state_t *cvars)
 
 void Cvar_RestoreInitState(cvar_state_t *cvars)
 {
-	int hashindex;
+	unsigned hashindex;
 	cvar_t *c, **cp;
 	cvar_t *c2, **cp2;
 	for (cp = &cvars->vars;(c = *cp);)
@@ -1093,10 +1102,10 @@ void Cvar_SetA_f(cmd_state_t *cmd)
 void Cvar_Del_f(cmd_state_t *cmd)
 {
 	cvar_state_t *cvars = cmd->cvars;
-	int neededflags = ~0;
 	int i;
 	cvar_t *parent, **link;
 	cvar_t *cvar, *prev;
+	cvar_hash_t **hashlinkptr, *oldhashlink;
 
 	if(Cmd_Argc(cmd) < 2)
 	{
@@ -1105,20 +1114,23 @@ void Cvar_Del_f(cmd_state_t *cmd)
 	}
 	for(i = 1; i < Cmd_Argc(cmd); ++i)
 	{
-		cvar = Cvar_FindVarLink(cvars, Cmd_Argv(cmd, i), &parent, &link, &prev, neededflags);
+		hashlinkptr = Cvar_FindVarLink(cvars, Cmd_Argv(cmd, i), &parent, &link, &prev, ~0);
 
-		if(!cvar)
+		if(!hashlinkptr)
 		{
 			Con_Printf("%s: %s is not defined\n", Cmd_Argv(cmd, 0), Cmd_Argv(cmd, i));
 			continue;
 		}
+		cvar = (*hashlinkptr)->cvar;
+
 		if(Cvar_Readonly(cvar, Cmd_Argv(cmd, 0)))
 			continue;
 		if(!(cvar->flags & CF_ALLOCATED))
 		{
-			Con_Printf("%s: %s is static and cannot be deleted\n", Cmd_Argv(cmd, 0), cvar->name);
+			Con_Printf(CON_WARN "%s: %s is static and cannot be deleted\n", Cmd_Argv(cmd, 0), cvar->name);
 			continue;
 		}
+
 		if(cvar == cvars->vars)
 		{
 			cvars->vars = cvar->next;
@@ -1141,6 +1153,10 @@ void Cvar_Del_f(cmd_state_t *cmd)
 		Z_Free((char *)cvar->string);
 		Z_Free((char *)cvar->defstring);
 		Z_Free(cvar);
+
+		oldhashlink = *hashlinkptr;
+		*hashlinkptr = (*hashlinkptr)->next;
+		Z_Free(oldhashlink);
 	}
 }
 

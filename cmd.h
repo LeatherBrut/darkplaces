@@ -85,7 +85,7 @@ typedef struct cmd_alias_s
 
 typedef struct cmd_function_s
 {
-	int flags;
+	unsigned flags;
 	struct cmd_function_s *next;
 	const char *name;
 	const char *description;
@@ -140,19 +140,16 @@ typedef struct cmd_state_s
 	cmd_function_t *engine_functions;
 
 	struct cvar_state_s *cvars; // which cvar system is this cmd state able to access? (&cvars_all or &cvars_null)
-	int cvars_flagsmask; // which CVAR_* flags should be visible to this interpreter? (CF_CLIENT | CF_SERVER, or just CF_SERVER)
-
-	int cmd_flags; // cmd flags that identify this interpreter
+	unsigned cvars_flagsmask; // which CVAR_* flags should be visible to this interpreter? (CF_CLIENT | CF_SERVER, or just CF_SERVER)
+	unsigned cmd_flagsmask; // cmd flags that identify this interpreter
 
 	qbool (*Handle)(struct cmd_state_s *, struct cmd_function_s *, const char *, enum cmd_source_s);
-	qbool (*NotFound)(struct cmd_state_s *, struct cmd_function_s *, const char *, enum cmd_source_s);
 }
 cmd_state_t;
 
 qbool Cmd_Callback(cmd_state_t *cmd, cmd_function_t *func, const char *text, cmd_source_t src);
 qbool Cmd_CL_Callback(cmd_state_t *cmd, cmd_function_t *func, const char *text, cmd_source_t src);
 qbool Cmd_SV_Callback(cmd_state_t *cmd, cmd_function_t *func, const char *text, cmd_source_t src);
-qbool Cmd_SV_NotFound(cmd_state_t *cmd, cmd_function_t *func, const char *text, cmd_source_t src);
 
 typedef struct cmd_input_s
 {
@@ -223,7 +220,7 @@ void Cmd_SaveInitState(void);
 // called by FS_GameDir_f, this restores cvars, commands and aliases to init values
 void Cmd_RestoreInitState(void);
 
-void Cmd_AddCommand(int flags, const char *cmd_name, xcommand_t function, const char *description);
+void Cmd_AddCommand(unsigned flags, const char *cmd_name, xcommand_t function, const char *description);
 // called by the init functions of other parts of the program to
 // register commands and functions to call for them.
 // The cmd_name is referenced later, so it should not be in temp memory
@@ -236,37 +233,37 @@ qbool Cmd_Exists (cmd_state_t *cmd, const char *cmd_name);
 const char *Cmd_CompleteCommand (cmd_state_t *cmd, const char *partial);
 
 int Cmd_CompleteAliasCountPossible (cmd_state_t *cmd, const char *partial);
-
 const char **Cmd_CompleteAliasBuildList (cmd_state_t *cmd, const char *partial);
-
 int Cmd_CompleteCountPossible (cmd_state_t *cmd, const char *partial);
-
 const char **Cmd_CompleteBuildList (cmd_state_t *cmd, const char *partial);
-
 void Cmd_CompleteCommandPrint (cmd_state_t *cmd, const char *partial);
-
 const char *Cmd_CompleteAlias (cmd_state_t *cmd, const char *partial);
-
 void Cmd_CompleteAliasPrint (cmd_state_t *cmd, const char *partial);
 
 // Enhanced console completion by Fett erich@heintz.com
-
 // Added by EvilTypeGuy eviltypeguy@qeradiant.com
 
-int Cmd_Argc (cmd_state_t *cmd);
-const char *Cmd_Argv (cmd_state_t *cmd, int arg);
-const char *Cmd_Args (cmd_state_t *cmd);
 // The functions that execute commands get their parameters with these
 // functions. Cmd_Argv(cmd, ) will return an empty string, not a NULL
 // if arg > argc, so string operations are always safe.
+static inline int Cmd_Argc (cmd_state_t *cmd)
+{
+	return cmd->argc;
+}
+static inline const char *Cmd_Argv(cmd_state_t *cmd, int arg)
+{
+	if (arg >= cmd->argc )
+		return cmd->null_string;
+	return cmd->argv[arg];
+}
+static inline const char *Cmd_Args (cmd_state_t *cmd)
+{
+	return cmd->args;
+}
 
 /// Returns the position (1 to argc-1) in the command's argument list
 /// where the given parameter apears, or 0 if not present
 int Cmd_CheckParm (cmd_state_t *cmd, const char *parm);
-
-//void Cmd_TokenizeString (char *text);
-// Takes a null terminated string.  Does not need to be /n terminated.
-// breaks the string up into arg tokens.
 
 /// Parses a single line of text into arguments and tries to execute it.
 /// The text can come from the command buffer, a remote client, or stdin.

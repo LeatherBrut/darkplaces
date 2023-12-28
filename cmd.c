@@ -118,49 +118,6 @@ static void Cmd_Defer_f (cmd_state_t *cmd)
 }
 
 /*
-============
-Cmd_Centerprint_f
-
-Print something to the center of the screen using SCR_Centerprint
-============
-*/
-static void Cmd_Centerprint_f (cmd_state_t *cmd)
-{
-	char msg[MAX_INPUTLINE];
-	unsigned int i, c, p;
-	c = Cmd_Argc(cmd);
-	if(c >= 2)
-	{
-		strlcpy(msg, Cmd_Argv(cmd,1), sizeof(msg));
-		for(i = 2; i < c; ++i)
-		{
-			strlcat(msg, " ", sizeof(msg));
-			strlcat(msg, Cmd_Argv(cmd, i), sizeof(msg));
-		}
-		c = (unsigned int)strlen(msg);
-		for(p = 0, i = 0; i < c; ++i)
-		{
-			if(msg[i] == '\\')
-			{
-				if(msg[i+1] == 'n')
-					msg[p++] = '\n';
-				else if(msg[i+1] == '\\')
-					msg[p++] = '\\';
-				else {
-					msg[p++] = '\\';
-					msg[p++] = msg[i+1];
-				}
-				++i;
-			} else {
-				msg[p++] = msg[i];
-			}
-		}
-		msg[p] = '\0';
-		SCR_CenterPrint(msg);
-	}
-}
-
-/*
 =============================================================================
 
 						COMMAND BUFFER
@@ -309,16 +266,18 @@ void Cbuf_AddText (cmd_state_t *cmd, const char *text)
 	cmd_buf_t *cbuf = cmd->cbuf;
 	llist_t llist = {&llist, &llist};
 
+	if (cbuf->size + l > cbuf->maxsize)
+	{
+		Con_Printf(CON_WARN "Cbuf_AddText: input too large, %zuKB ought to be enough for anybody.\n", cbuf->maxsize / 1024);
+		return;
+	}
+
 	Cbuf_Lock(cbuf);
 
-	if (cbuf->maxsize - cbuf->size <= l)
-		Con_Print("Cbuf_AddText: overflow\n");
-	else
-	{
-		// If the string terminates but the (last) line doesn't, the node will be left in the pending state (to be continued).
-		Cbuf_ParseText(cmd, &llist, (List_Is_Empty(&cbuf->start) ? NULL : List_Entry(cbuf->start.prev, cmd_input_t, list)), text, true);
-		List_Splice_Tail(&llist, &cbuf->start);
-	}
+	// If the string terminates but the (last) line doesn't, the node will be left in the pending state (to be continued).
+	Cbuf_ParseText(cmd, &llist, (List_Is_Empty(&cbuf->start) ? NULL : List_Entry(cbuf->start.prev, cmd_input_t, list)), text, true);
+	List_Splice_Tail(&llist, &cbuf->start);
+
 	Cbuf_Unlock(cbuf);
 }
 
@@ -335,18 +294,19 @@ void Cbuf_InsertText (cmd_state_t *cmd, const char *text)
 	llist_t llist = {&llist, &llist};
 	size_t l = strlen(text);
 
+	if (cbuf->size + l > cbuf->maxsize)
+	{
+		Con_Printf(CON_WARN "Cbuf_InsertText: input too large, %zuKB ought to be enough for anybody.\n", cbuf->maxsize / 1024);
+		return;
+	}
+
 	Cbuf_Lock(cbuf);
 
-	if (cbuf->size + l >= cbuf->maxsize)
-		Con_Print("Cbuf_InsertText: overflow\n");
-	else
-	{
-		// bones_was_here assertion: when prepending to the buffer it never makes sense to leave node(s) in the `pending` state,
-		// it would have been impossible to append to such text later in the old raw text buffer,
-		// and allowing it causes bugs when .cfg files lack \n at EOF (see: https://gitlab.com/xonotic/darkplaces/-/issues/378).
-		Cbuf_ParseText(cmd, &llist, (List_Is_Empty(&cbuf->start) ? NULL : List_Entry(cbuf->start.next, cmd_input_t, list)), text, false);
-		List_Splice(&llist, &cbuf->start);
-	}
+	// bones_was_here assertion: when prepending to the buffer it never makes sense to leave node(s) in the `pending` state,
+	// it would have been impossible to append to such text later in the old raw text buffer,
+	// and allowing it causes bugs when .cfg files lack \n at EOF (see: https://gitlab.com/xonotic/darkplaces/-/issues/378).
+	Cbuf_ParseText(cmd, &llist, (List_Is_Empty(&cbuf->start) ? NULL : List_Entry(cbuf->start.next, cmd_input_t, list)), text, false);
+	List_Splice(&llist, &cbuf->start);
 
 	Cbuf_Unlock(cbuf);
 }
@@ -364,7 +324,7 @@ static void Cbuf_Execute_Deferred (cmd_buf_t *cbuf)
 	if (host.realtime - cbuf->deferred_oldtime < 0 || host.realtime - cbuf->deferred_oldtime > 1800)
 		cbuf->deferred_oldtime = host.realtime;
 	eat = host.realtime - cbuf->deferred_oldtime;
-	if (eat < 1/128)
+	if (eat < 1.0/128.0)
 		return;
 	cbuf->deferred_oldtime = host.realtime;
 
@@ -586,7 +546,7 @@ static void Cmd_Exec(cmd_state_t *cmd, const char *filename)
 	f = (char *)FS_LoadFile (filename, tempmempool, false, NULL);
 	if (!f)
 	{
-		Con_Printf("couldn't exec %s\n",filename);
+		Con_Printf(CON_WARN "couldn't exec %s\n",filename);
 		return;
 	}
 	Con_Printf("execing %s\n",filename);
@@ -844,7 +804,7 @@ static void Cmd_Exec_f (cmd_state_t *cmd)
 	s = FS_Search(Cmd_Argv(cmd, 1), true, true, NULL);
 	if(!s || !s->numfilenames)
 	{
-		Con_Printf("couldn't exec %s\n",Cmd_Argv(cmd, 1));
+		Con_Printf(CON_WARN "couldn't exec %s\n",Cmd_Argv(cmd, 1));
 		return;
 	}
 
@@ -946,7 +906,7 @@ static void Cmd_Toggle_f(cmd_state_t *cmd)
 		}
 		else
 		{ // Invalid CVar
-			Con_Printf("ERROR : CVar '%s' not found\n", Cmd_Argv(cmd, 1) );
+			Con_Printf(CON_WARN "ERROR : CVar '%s' not found\n", Cmd_Argv(cmd, 1) );
 		}
 	}
 }
@@ -977,7 +937,7 @@ static void Cmd_Alias_f (cmd_state_t *cmd)
 	s = Cmd_Argv(cmd, 1);
 	if (strlen(s) >= MAX_ALIAS_NAME)
 	{
-		Con_Print("Alias name is too long\n");
+		Con_Print(CON_WARN "Alias name is too long\n");
 		return;
 	}
 
@@ -1593,7 +1553,7 @@ static void Cmd_Apropos_f(cmd_state_t *cmd)
 	Con_Printf("%i result%s\n\n", count, (count > 1) ? "s" : "");
 }
 
-static cmd_state_t *Cmd_AddInterpreter(cmd_buf_t *cbuf, cvar_state_t *cvars, int cvars_flagsmask, int cmds_flagsmask, cmd_userdefined_t *userdefined)
+static cmd_state_t *Cmd_AddInterpreter(cmd_buf_t *cbuf, cvar_state_t *cvars, unsigned cvars_flagsmask, unsigned cmds_flagsmask, cmd_userdefined_t *userdefined)
 {
 	cmd_state_t *cmd = (cmd_state_t *)Mem_Alloc(tempmempool, sizeof(cmd_state_t));
 	
@@ -1604,7 +1564,7 @@ static cmd_state_t *Cmd_AddInterpreter(cmd_buf_t *cbuf, cvar_state_t *cvars, int
 
 	cmd->cvars = cvars;
 	cmd->cvars_flagsmask = cvars_flagsmask;
-	cmd->cmd_flags = cmds_flagsmask;
+	cmd->cmd_flagsmask = cmds_flagsmask;
 	cmd->userdefined = userdefined;
 
 	return cmd;
@@ -1618,6 +1578,8 @@ Cmd_Init
 void Cmd_Init(void)
 {
 	cmd_buf_t *cbuf;
+	unsigned cvars_flagsmask, cmds_flagsmask;
+
 	cbuf_mempool = Mem_AllocPool("Command buffer", 0, NULL);
 	cbuf = (cmd_buf_t *)Mem_Alloc(cbuf_mempool, sizeof(cmd_buf_t));
 	cbuf->maxsize = CMDBUFSIZE;
@@ -1633,14 +1595,22 @@ void Cmd_Init(void)
 	cmd_iter_all = (cmd_iter_t *)Mem_Alloc(tempmempool, sizeof(cmd_iter_t) * 3);
 
 	// local console
-	cmd_iter_all[0].cmd = cmd_local = Cmd_AddInterpreter(cbuf, &cvars_all, CF_CLIENT | CF_SERVER, CF_CLIENT | CF_CLIENT_FROM_SERVER | CF_SERVER_FROM_CLIENT, &cmd_userdefined_all);
+	if (cls.state == ca_dedicated)
+	{
+		cvars_flagsmask = CF_SERVER;
+		cmds_flagsmask = CF_SERVER | CF_SERVER_FROM_CLIENT;
+	}
+	else
+	{
+		cvars_flagsmask = CF_CLIENT | CF_SERVER;
+		cmds_flagsmask = CF_CLIENT | CF_SERVER | CF_CLIENT_FROM_SERVER | CF_SERVER_FROM_CLIENT;
+	}
+	cmd_iter_all[0].cmd = cmd_local = Cmd_AddInterpreter(cbuf, &cvars_all, cvars_flagsmask, cmds_flagsmask, &cmd_userdefined_all);
 	cmd_local->Handle = Cmd_CL_Callback;
-	cmd_local->NotFound = NULL;
 
 	// server commands received from clients have no reason to access cvars, cvar expansion seems perilous.
 	cmd_iter_all[1].cmd = cmd_serverfromclient = Cmd_AddInterpreter(cbuf, &cvars_null, 0, CF_SERVER_FROM_CLIENT | CF_USERINFO, &cmd_userdefined_null);
 	cmd_serverfromclient->Handle = Cmd_SV_Callback;
-	cmd_serverfromclient->NotFound = Cmd_SV_NotFound;
 
 	cmd_iter_all[2].cmd = NULL;
 //
@@ -1648,7 +1618,6 @@ void Cmd_Init(void)
 //
 	// client-only commands
 	Cmd_AddCommand(CF_SHARED, "wait", Cmd_Wait_f, "make script execution wait for next rendered frame");
-	Cmd_AddCommand(CF_CLIENT, "cprint", Cmd_Centerprint_f, "print something at the screen center");
 
 	// maintenance commands used for upkeep of cvars and saved configs
 	Cmd_AddCommand(CF_SHARED, "stuffcmds", Cmd_StuffCmds_f, "execute commandline parameters (must be present in quake.rc script)");
@@ -1708,44 +1677,13 @@ void Cmd_Shutdown(void)
 
 /*
 ============
-Cmd_Argc
-============
-*/
-inline int Cmd_Argc (cmd_state_t *cmd)
-{
-	return cmd->argc;
-}
-
-/*
-============
-Cmd_Argv
-============
-*/
-inline const char *Cmd_Argv(cmd_state_t *cmd, int arg)
-{
-	if (arg >= cmd->argc )
-		return cmd->null_string;
-	return cmd->argv[arg];
-}
-
-/*
-============
-Cmd_Args
-============
-*/
-inline const char *Cmd_Args (cmd_state_t *cmd)
-{
-	return cmd->args;
-}
-
-/*
-============
 Cmd_TokenizeString
 
 Parses the given string into command line tokens.
+Takes a null terminated string.  Does not need to be /n terminated.
 ============
 */
-// AK: This function should only be called from ExcuteString because the current design is a bit of an hack
+// AK: This function should only be called from ExecuteString because the current design is a bit of an hack
 static void Cmd_TokenizeString (cmd_state_t *cmd, const char *text)
 {
 	int l;
@@ -1789,7 +1727,7 @@ static void Cmd_TokenizeString (cmd_state_t *cmd, const char *text)
 			l = (int)strlen(com_token) + 1;
 			if (cmd->cbuf->tokenizebufferpos + l > CMD_TOKENIZELENGTH)
 			{
-				Con_Printf("Cmd_TokenizeString: ran out of %i character buffer space for command arguments\n", CMD_TOKENIZELENGTH);
+				Con_Printf(CON_WARN "Cmd_TokenizeString: ran out of %i character buffer space for command arguments\n", CMD_TOKENIZELENGTH);
 				break;
 			}
 			memcpy (cmd->cbuf->tokenizebuffer + cmd->cbuf->tokenizebufferpos, com_token, l);
@@ -1806,7 +1744,7 @@ static void Cmd_TokenizeString (cmd_state_t *cmd, const char *text)
 Cmd_AddCommand
 ============
 */
-void Cmd_AddCommand(int flags, const char *cmd_name, xcommand_t function, const char *description)
+void Cmd_AddCommand(unsigned flags, const char *cmd_name, xcommand_t function, const char *description)
 {
 	cmd_function_t *func;
 	cmd_function_t *prev, *current;
@@ -1816,12 +1754,12 @@ void Cmd_AddCommand(int flags, const char *cmd_name, xcommand_t function, const 
 	for (i = 0; i < 2; i++)
 	{
 		cmd = cmd_iter_all[i].cmd;
-		if (flags & cmd->cmd_flags)
+		if (flags & cmd->cmd_flagsmask)
 		{
 			// fail if the command is a variable name
 			if (Cvar_FindVar(cmd->cvars, cmd_name, ~0))
 			{
-				Con_Printf("Cmd_AddCommand: %s already defined as a var\n", cmd_name);
+				Con_Printf(CON_WARN "Cmd_AddCommand: %s already defined as a var\n", cmd_name);
 				return;
 			}
 
@@ -1832,7 +1770,7 @@ void Cmd_AddCommand(int flags, const char *cmd_name, xcommand_t function, const 
 				{
 					if (!strcmp(cmd_name, func->name))
 					{
-						Con_Printf("Cmd_AddCommand: %s already defined\n", cmd_name);
+						Con_Printf(CON_WARN "Cmd_AddCommand: %s already defined\n", cmd_name);
 						continue;
 					}
 				}
@@ -2158,7 +2096,7 @@ qbool Cmd_Callback(cmd_state_t *cmd, cmd_function_t *func, const char *text, cmd
 	if (func->function)
 		func->function(cmd);
 	else
-		Con_Printf("Command \"%s\" can not be executed\n", Cmd_Argv(cmd, 0));
+		Con_Printf(CON_WARN "Command \"%s\" can not be executed\n", Cmd_Argv(cmd, 0));
 	return true;
 }
 
@@ -2183,7 +2121,7 @@ qbool Cmd_CL_Callback(cmd_state_t *cmd, cmd_function_t *func, const char *text, 
 		}
 		else if(!(func->flags & CF_SERVER))
 		{
-			Con_Printf("Cannot execute client commands from a dedicated server console.\n");
+			Con_Printf(CON_WARN "Cannot execute client commands from a dedicated server console.\n");
 			return true;
 		}
 	}
@@ -2197,7 +2135,7 @@ qbool Cmd_SV_Callback(cmd_state_t *cmd, cmd_function_t *func, const char *text, 
 	else if (src == src_client)
 	{
 		if((func->flags & CF_CHEAT) && !sv_cheats.integer)
-			SV_ClientPrintf("No cheats allowed. The server must have sv_cheats set to 1\n");
+			SV_ClientPrintf(CON_WARN "No cheats allowed. The server must have sv_cheats set to 1\n");
 		else
 			func->function(cmd);
 		return true;
@@ -2205,15 +2143,6 @@ qbool Cmd_SV_Callback(cmd_state_t *cmd, cmd_function_t *func, const char *text, 
 	return false;
 }
 
-qbool Cmd_SV_NotFound(cmd_state_t *cmd, cmd_function_t *func, const char *text, cmd_source_t src)
-{
-	if (cmd->source == src_client)
-	{
-		Con_Printf("Client \"%s\" tried to execute \"%s\"\n", host_client->name, text);
-		return true;
-	}
-	return false;
-}
 /*
 ============
 Cmd_ExecuteString
@@ -2227,6 +2156,7 @@ void Cmd_ExecuteString (cmd_state_t *cmd, const char *text, cmd_source_t src, qb
 	int oldpos;
 	cmd_function_t *func;
 	cmd_alias_t *a;
+
 	if (lockmutex)
 		Cbuf_Lock(cmd->cbuf);
 	oldpos = cmd->cbuf->tokenizebufferpos;
@@ -2240,31 +2170,27 @@ void Cmd_ExecuteString (cmd_state_t *cmd, const char *text, cmd_source_t src, qb
 
 // check functions
 	for (func = cmd->userdefined->qc_functions; func; func = func->next)
-	{
 		if (!strcasecmp(cmd->argv[0], func->name))
-		{
 			if(cmd->Handle(cmd, func, text, src))
-				goto done;
-		}
-	}
+				goto functions_done;
 
 	for (func = cmd->engine_functions; func; func=func->next)
-	{
 		if (!strcasecmp (cmd->argv[0], func->name))
-		{
 			if(cmd->Handle(cmd, func, text, src))
-				goto done;
-		}
-	}
+				goto functions_done;
 
-	// if it's a client command and no command was found, say so.
-	if(cmd->NotFound)
+functions_done:
+	// If it's a client command and wasn't found and handled, say so.
+	// Also don't let clients call server aliases.
+	if (cmd->source == src_client)
 	{
-		if(cmd->NotFound(cmd, func, text, src))
-			goto done;
+		if (!func)
+			Con_Printf("Client \"%s\" tried to execute \"%s\"\n", host_client->name, text);
+		goto done;
 	}
 
 // check alias
+	// Execute any alias with the same name as a command after the command.
 	for (a=cmd->userdefined->alias ; a ; a=a->next)
 	{
 		if (!strcasecmp (cmd->argv[0], a->name))
@@ -2274,9 +2200,13 @@ void Cmd_ExecuteString (cmd_state_t *cmd, const char *text, cmd_source_t src, qb
 		}
 	}
 
+	// If the command was found and handled don't try to handle it as a cvar.
+	if (func)
+		goto done;
+
 // check cvars
 	if (!Cvar_Command(cmd) && host.framecount > 0)
-		Con_Printf("Unknown command \"%s\"\n", Cmd_Argv(cmd, 0));
+		Con_Printf(CON_WARN "Unknown command \"%s\"\n", Cmd_Argv(cmd, 0));
 done:
 	cmd->cbuf->tokenizebufferpos = oldpos;
 	if (lockmutex)
@@ -2298,7 +2228,7 @@ int Cmd_CheckParm (cmd_state_t *cmd, const char *parm)
 
 	if (!parm)
 	{
-		Con_Printf ("Cmd_CheckParm: NULL");
+		Con_Printf(CON_WARN "Cmd_CheckParm: NULL");
 		return 0;
 	}
 
