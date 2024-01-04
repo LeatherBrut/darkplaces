@@ -425,8 +425,12 @@ static void Cbuf_Frame_Input(void)
 {
 	char *line;
 
-	while ((line = Sys_ConsoleInput()))
-			Cbuf_AddText(cmd_local, line);
+	if ((line = Sys_ConsoleInput()))
+	{
+		// bones_was_here: prepending allows a loop such as `alias foo "bar; wait; foo"; foo`
+		// to be broken with an alias or unalias command
+		Cbuf_InsertText(cmd_local, line);
+	}
 }
 
 void Cbuf_Frame(cmd_buf_t *cbuf)

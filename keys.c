@@ -92,18 +92,20 @@ static void Key_History_Init(void)
 
 static void Key_History_Shutdown(void)
 {
-	// TODO write history to a file
-
 // not necessary for mobile
 #ifndef DP_MOBILETOUCH
 	qfile_t *historyfile = FS_OpenRealFile("darkplaces_history.txt", "w", false);
 	if(historyfile)
 	{
 		int i;
+
+		Con_Print("Saving command history to darkplaces_history.txt ...\n");
 		for(i = 0; i < CONBUFFER_LINES_COUNT(&history); ++i)
 			FS_Printf(historyfile, "%s\n", ConBuffer_GetLine(&history, i));
 		FS_Close(historyfile);
 	}
+	else
+		Con_Print(CON_ERROR "Couldn't write darkplaces_history.txt\n");
 #endif
 
 	ConBuffer_Shutdown(&history);
@@ -768,7 +770,7 @@ int Key_Parse_CommonKeys(cmd_state_t *cmd, qbool is_console, int key, int unicod
 	if ((key == 'v' && KM_CTRL) || ((key == K_INS || key == K_KP_INS) && KM_SHIFT))
 	{
 		char *cbd, *p;
-		if ((cbd = Sys_GetClipboardData()) != 0)
+		if ((cbd = Sys_SDL_GetClipboardData()) != 0)
 		{
 			int i;
 #if 1
@@ -1098,8 +1100,7 @@ static int Key_Convert_NumPadKey(int key)
 	return key;
 }
 
-static void
-Key_Console(cmd_state_t *cmd, int key, int unicode)
+static void Key_Console(cmd_state_t *cmd, int key, int unicode)
 {
 	int linepos;
 
@@ -1121,8 +1122,9 @@ Key_Console(cmd_state_t *cmd, int key, int unicode)
 
 	if ((key == K_ENTER || key == K_KP_ENTER) && KM_NONE)
 	{
-		Cbuf_AddText (cmd, key_line+1);	// skip the ]
-		Cbuf_AddText (cmd, "\n");
+		// bones_was_here: prepending allows a loop such as `alias foo "bar; wait; foo"; foo`
+		// to be broken with an alias or unalias command
+		Cbuf_InsertText(cmd, key_line+1); // skip the ]
 		Key_History_Push();
 		key_linepos = Key_ClearEditLine(true);
 		// force an update, because the command may take some time

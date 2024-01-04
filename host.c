@@ -202,9 +202,11 @@ void Host_SaveConfig(const char *file)
 		f = FS_OpenRealFile(file, "wb", false);
 		if (!f)
 		{
-			Con_Printf(CON_ERROR "Couldn't write %s.\n", file);
+			Con_Printf(CON_ERROR "Couldn't write %s\n", file);
 			return;
 		}
+		else
+			Con_Printf("Saving config to %s ...\n", file);
 
 		Key_WriteBindings (f);
 		Cvar_WriteVariables (&cvars_all, f);
@@ -217,10 +219,8 @@ static void Host_SaveConfig_f(cmd_state_t *cmd)
 {
 	const char *file = CONFIGFILENAME;
 
-	if(Cmd_Argc(cmd) >= 2) {
+	if(Cmd_Argc(cmd) >= 2)
 		file = Cmd_Argv(cmd, 1);
-		Con_Printf("Saving to %s\n", file);
-	}
 
 	Host_SaveConfig(file);
 }
@@ -370,6 +370,10 @@ static void Host_Init (void)
 	int i;
 	char vabuf[1024];
 
+	Sys_SDL_Init();
+
+	Memory_Init();
+
 	host.hook.ConnectLocal = NULL;
 	host.hook.Disconnect = NULL;
 	host.hook.ToggleMenu = NULL;
@@ -435,6 +439,7 @@ static void Host_Init (void)
 	Memory_Init_Commands();
 
 	// initialize console and logging and its cvars/commands
+	// this enables Con_Printf() messages to be coloured
 	Con_Init();
 
 	// initialize various cvars that could not be initialized earlier
@@ -443,10 +448,10 @@ static void Host_Init (void)
 	Sys_Init_Commands();
 	COM_Init_Commands();
 
-	// initialize filesystem (including fs_basedir, fs_gamedir, -game, scr_screenshot_name)
+	// initialize filesystem (including fs_basedir, fs_gamedir, -game, scr_screenshot_name, gamename)
 	FS_Init();
 
-	// construct a version string for the corner of the console
+	// ASAP! construct a version string for the corner of the console and for crash messages
 	dpsnprintf (engineversion, sizeof (engineversion), "%s %s%s, buildstring: %s", gamename, DP_OS_NAME, cls.state == ca_dedicated ? " dedicated" : "", buildstring);
 	Con_Printf("%s\n", engineversion);
 
@@ -576,12 +581,12 @@ void Host_Shutdown(void)
 
 	if (isdown)
 	{
-		Con_Print("recursive shutdown\n");
+		Con_Print(CON_WARN "recursive shutdown\n");
 		return;
 	}
 	if (setjmp(host.abortframe))
 	{
-		Con_Print("aborted the quitting frame?!?\n");
+		Con_Print(CON_WARN "aborted the quitting frame?!?\n");
 		return;
 	}
 	isdown = true;
@@ -609,7 +614,7 @@ void Host_Shutdown(void)
 	TaskQueue_Shutdown();
 	Thread_Shutdown();
 	Cmd_Shutdown();
-	Sys_Shutdown();
+	Sys_SDL_Shutdown();
 	Log_Close();
 	Crypto_Shutdown();
 

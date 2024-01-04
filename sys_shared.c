@@ -4,23 +4,23 @@
 # endif
 #endif
 
-#include "quakedef.h"
-#include "taskqueue.h"
-#include "thread.h"
-#include "libcurl.h"
-
 #define SUPPORTDLL
 
 #ifdef WIN32
 # include <windows.h>
 # include <mmsystem.h> // timeGetTime
 # include <time.h> // localtime
+# include <conio.h> // _kbhit, _getch, _putch
+# include <io.h> // write; Include this BEFORE darkplaces.h because it uses strncpy which trips DP_STATIC_ASSERT
 #ifdef _MSC_VER
 #pragma comment(lib, "winmm.lib")
 #endif
 #else
 # ifdef __FreeBSD__
 #  include <sys/sysctl.h>
+# endif
+# ifdef __ANDROID__
+#  include <android/log.h>
 # endif
 # include <unistd.h>
 # include <fcntl.h>
@@ -30,6 +30,15 @@
 #  include <dlfcn.h>
 # endif
 #endif
+
+#include <signal.h>
+
+#include "quakedef.h"
+#include "taskqueue.h"
+#include "thread.h"
+#include "libcurl.h"
+
+sys_t sys;
 
 static char sys_timestring[128];
 char *Sys_TimeString(const char *timeformat)
@@ -58,6 +67,15 @@ void Sys_Quit (int returnvalue)
 		Sys_AllowProfiling(false);
 	host.state = host_shutdown;
 	Host_Shutdown();
+
+#ifdef __ANDROID__
+	Sys_AllowProfiling(false);
+#endif
+#ifndef WIN32
+	fcntl (0, F_SETFL, fcntl (0, F_GETFL, 0) & ~O_NONBLOCK);
+#endif
+	fflush(stdout);
+
 	exit(returnvalue);
 }
 
@@ -481,7 +499,7 @@ double Sys_Sleep(double time)
 	}
 
 	if(sys_debugsleep.integer)
-		Sys_Printf("sys_debugsleep: requesting %u ", microseconds);
+		Con_Printf("sys_debugsleep: requesting %u ", microseconds);
 	dt = Sys_DirtyTime();
 
 	// less important on newer libcurl so no need to disturb dedicated servers
@@ -536,10 +554,54 @@ double Sys_Sleep(double time)
 
 	dt = Sys_DirtyTime() - dt;
 	if(sys_debugsleep.integer)
-		Sys_Printf(" got %u oversleep %d\n", (unsigned int)(dt * 1000000), (unsigned int)(dt * 1000000) - microseconds);
+		Con_Printf(" got %u oversleep %d\n", (unsigned int)(dt * 1000000), (unsigned int)(dt * 1000000) - microseconds);
 	return (dt < 0 || dt >= 1800) ? 0 : dt;
 }
 
+
+/*
+===============================================================================
+
+STDIO
+
+===============================================================================
+*/
+
+void Sys_Print(const char *text)
+{
+#ifdef __ANDROID__
+	if (developer.integer > 0)
+	{
+		__android_log_write(ANDROID_LOG_DEBUG, sys.argv[0], text);
+	}
+#else
+	if(sys.outfd < 0)
+		return;
+  #ifndef WIN32
+	// BUG: for some reason, NDELAY also affects stdout (1) when used on stdin (0).
+	// this is because both go to /dev/tty by default!
+	{
+		int origflags = fcntl (sys.outfd, F_GETFL, 0);
+		fcntl (sys.outfd, F_SETFL, origflags & ~O_NONBLOCK);
+  #else
+    #define write _write
+  #endif
+		while(*text)
+		{
+			fs_offset_t written = (fs_offset_t)write(sys.outfd, text, (int)strlen(text));
+			if(written <= 0)
+				break; // sorry, I cannot do anything about this error - without an output
+			text += written;
+		}
+  #ifndef WIN32
+		fcntl (sys.outfd, F_SETFL, origflags);
+	}
+  #endif
+	//fprintf(stdout, "%s", text);
+#endif
+}
+
+/// for the console to report failures inside Con_Printf()
 void Sys_Printf(const char *fmt, ...)
 {
 	va_list argptr;
@@ -550,6 +612,88 @@ void Sys_Printf(const char *fmt, ...)
 	va_end(argptr);
 
 	Sys_Print(msg);
+}
+
+/// Reads a line from POSIX stdin or the Windows console
+char *Sys_ConsoleInput(void)
+{
+	static char text[MAX_INPUTLINE];
+#ifdef WIN32
+	static unsigned int len = 0;
+	int c;
+
+	// read a line out
+	while (_kbhit ())
+	{
+		c = _getch ();
+		if (c == '\r')
+		{
+			text[len] = '\0';
+			_putch ('\n');
+			len = 0;
+			return text;
+		}
+		if (c == '\b')
+		{
+			if (len)
+			{
+				_putch (c);
+				_putch (' ');
+				_putch (c);
+				len--;
+			}
+			continue;
+		}
+		if (len < sizeof (text) - 1)
+		{
+			_putch (c);
+			text[len] = c;
+			len++;
+		}
+	}
+#else
+	fd_set fdset;
+	struct timeval timeout = { .tv_sec = 0, .tv_usec = 0 };
+
+	FD_ZERO(&fdset);
+	FD_SET(fileno(stdin), &fdset);
+	if (select(1, &fdset, NULL, NULL, &timeout) != -1 && FD_ISSET(fileno(stdin), &fdset))
+		return fgets(text, sizeof(text), stdin);
+#endif
+	return NULL;
+}
+
+
+/*
+===============================================================================
+
+Startup and Shutdown
+
+===============================================================================
+*/
+
+void Sys_Error (const char *error, ...)
+{
+	va_list argptr;
+	char string[MAX_INPUTLINE];
+
+// change stdin to non blocking
+#ifndef WIN32
+	fcntl (0, F_SETFL, fcntl (0, F_GETFL, 0) & ~O_NONBLOCK);
+#endif
+
+	va_start (argptr,error);
+	dpvsnprintf (string, sizeof (string), error, argptr);
+	va_end (argptr);
+
+	Con_Printf(CON_ERROR "Engine Error: %s\n", string);
+
+	// don't want a dead window left blocking the OS UI or the crash dialog
+	Host_Shutdown();
+
+	Sys_SDL_Dialog("Engine Error", string);
+
+	exit (1);
 }
 
 #ifndef WIN32
@@ -745,3 +889,112 @@ void Sys_MakeProcessMean (void)
 {
 }
 #endif
+
+/** Halt and try not to catch fire.
+ * Writing to any file could corrupt it,
+ * any uneccessary code could crash while we crash.
+ * No malloc() (libgcc should be loaded already) or Con_Printf() allowed here.
+ */
+static void Sys_HandleCrash(int sig)
+{
+#if __GLIBC__ >= 2 && __GLIBC_MINOR__ >= 1
+	// Before doing anything else grab the stack frame addresses
+	#include <execinfo.h>
+	void *stackframes[32];
+	int framecount = backtrace(stackframes, 32);
+#endif
+
+	// Windows doesn't have strsignal()
+	const char *sigdesc;
+	switch (sig)
+	{
+#ifndef WIN32 // or SIGBUS
+		case SIGBUS:  sigdesc = "Bus error"; break;
+#endif
+		case SIGILL:  sigdesc = "Illegal instruction"; break;
+		case SIGABRT: sigdesc = "Aborted"; break;
+		case SIGFPE:  sigdesc = "Floating point exception"; break;
+		case SIGSEGV: sigdesc = "Segmentation fault"; break;
+		default:      sigdesc = "Yo dawg, we hit a bug while hitting a bug";
+	}
+
+	fprintf(stderr, "\n\n\e[1;37;41m    Engine Crash: %s (%d)    \e[m\n", sigdesc, sig);
+#if __GLIBC__ >= 2 && __GLIBC_MINOR__ >= 1
+	// the first two addresses will be in this function and in signal() in libc
+	backtrace_symbols_fd(stackframes + 2, framecount - 2, fileno(stderr));
+#endif
+	fprintf(stderr, "\e[1m%s\e[m\n", engineversion);
+
+	// DP8 TODO: send a disconnect message indicating we crashed, see CL_DisconnectEx()
+
+	// don't want a dead window left blocking the OS UI or the crash dialog
+	VID_Shutdown();
+	S_StopAllSounds();
+
+	Sys_SDL_Dialog("Engine Crash", sigdesc);
+
+	exit (sig);
+}
+
+static void Sys_HandleSignal(int sig)
+{
+#ifdef WIN32
+	// Windows users will likely never see this so no point replicating strsignal()
+	Con_Printf("\nReceived signal %d, exiting...\n", sig);
+#else
+	Con_Printf("\nReceived %s signal (%d), exiting...\n", strsignal(sig), sig);
+#endif
+	host.state = host_shutdown;
+}
+
+/// SDL2 only handles SIGINT and SIGTERM by default and doesn't log anything
+static void Sys_InitSignals(void)
+{
+// Windows docs say its signal() only accepts these ones
+	signal(SIGABRT, Sys_HandleCrash);
+	signal(SIGFPE,  Sys_HandleCrash);
+	signal(SIGILL,  Sys_HandleCrash);
+	signal(SIGINT,  Sys_HandleSignal);
+	signal(SIGSEGV, Sys_HandleCrash);
+	signal(SIGTERM, Sys_HandleSignal);
+#ifndef WIN32
+	signal(SIGHUP,  Sys_HandleSignal);
+	signal(SIGQUIT, Sys_HandleSignal);
+	signal(SIGBUS,  Sys_HandleCrash);
+	signal(SIGPIPE, Sys_HandleSignal);
+#endif
+}
+
+int main (int argc, char **argv)
+{
+	sys.argc = argc;
+	sys.argv = (const char **)argv;
+
+	// COMMANDLINEOPTION: -noterminal disables console output on stdout
+	if(Sys_CheckParm("-noterminal"))
+		sys.outfd = -1;
+	// COMMANDLINEOPTION: -stderr moves console output to stderr
+	else if(Sys_CheckParm("-stderr"))
+		sys.outfd = 2;
+	else
+		sys.outfd = 1;
+
+	sys.selffd = -1;
+	Sys_ProvideSelfFD(); // may call Con_Printf() so must be after sys.outfd is set
+
+#ifndef WIN32
+	fcntl(fileno(stdin), F_SETFL, fcntl (fileno(stdin), F_GETFL, 0) | O_NONBLOCK);
+#endif
+
+#ifdef __ANDROID__
+	Sys_AllowProfiling(true);
+#endif
+
+	Sys_InitSignals();
+
+	Host_Main();
+
+	Sys_Quit(0);
+
+	return 0;
+}

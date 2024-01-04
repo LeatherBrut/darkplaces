@@ -126,7 +126,7 @@ OBJ_MENU= \
 # note that builddate.c is very intentionally not compiled to a .o before
 # being linked, because it should be recompiled every time an executable is
 # built to give the executable a proper date string
-OBJ_SV= builddate.c sys_unix.o vid_null.o thread_null.o $(OBJ_SND_NULL) $(OBJ_COMMON)
+OBJ_SV= builddate.c sys_null.o vid_null.o thread_null.o $(OBJ_SND_NULL) $(OBJ_COMMON)
 OBJ_SDL= builddate.c sys_sdl.o vid_sdl.o thread_sdl.o $(OBJ_MENU) $(OBJ_SND_COMMON) $(OBJ_SND_XMP) snd_sdl.o $(OBJ_VIDEO_CAPTURE) $(OBJ_COMMON)
 
 
@@ -216,8 +216,10 @@ CMD_UNIXMKDIR=mkdir -p
 ##### Linux specific variables #####
 
 # Link
-LDFLAGS_LINUXSV=$(LDFLAGS_UNIXCOMMON) -lrt -ldl
-LDFLAGS_LINUXSDL=$(LDFLAGS_UNIXCOMMON) -lrt -ldl $(LDFLAGS_UNIXSDL)
+# -rdynamic allows glibc backtrace_symbols_fd() to convert addresses to function names
+# with a much smaller binary than with full debug symbols
+LDFLAGS_LINUXSV=$(LDFLAGS_UNIXCOMMON) -lrt -ldl -rdynamic
+LDFLAGS_LINUXSDL=$(LDFLAGS_UNIXCOMMON) -lrt -ldl -rdynamic $(LDFLAGS_UNIXSDL)
 
 
 ##### Mac OS X specific variables #####
