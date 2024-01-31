@@ -89,6 +89,10 @@ void Host_Error (const char *error, ...)
 	static char hosterrorstring2[MAX_INPUTLINE]; // THREAD UNSAFE
 	static qbool hosterror = false;
 	va_list argptr;
+	int outfd = sys.outfd;
+
+	// set output to stderr
+	sys.outfd = fileno(stderr);
 
 	// turn off rcon redirect if it was active when the crash occurred
 	// to prevent loops when it is a networking problem
@@ -101,15 +105,15 @@ void Host_Error (const char *error, ...)
 	Con_Printf(CON_ERROR "Host_Error: %s\n", hosterrorstring1);
 
 	// LadyHavoc: if crashing very early, or currently shutting down, do
-	// Sys_Error instead
+	// Sys_Abort instead
 	if (host.framecount < 3 || host.state == host_shutdown)
-		Sys_Error ("Host_Error: %s", hosterrorstring1);
+		Sys_Abort ("Host_Error during %s: %s", host.framecount < 3 ? "startup" : "shutdown", hosterrorstring1);
 
 	if (hosterror)
-		Sys_Error ("Host_Error: recursively entered (original error was: %s    new error is: %s)", hosterrorstring2, hosterrorstring1);
+		Sys_Abort ("Host_Error: recursively entered (original error was: %s    new error is: %s)", hosterrorstring2, hosterrorstring1);
 	hosterror = true;
 
-	strlcpy(hosterrorstring2, hosterrorstring1, sizeof(hosterrorstring2));
+	dp_strlcpy(hosterrorstring2, hosterrorstring1, sizeof(hosterrorstring2));
 
 	CL_Parse_DumpPacket();
 
@@ -131,15 +135,19 @@ void Host_Error (const char *error, ...)
 		host.hook.SV_Shutdown();
 
 	if (cls.state == ca_dedicated)
-		Sys_Error ("Host_Error: %s",hosterrorstring2);	// dedicated servers exit
+		Sys_Abort ("Host_Error: %s",hosterrorstring2);        // dedicated servers exit
 
 	// prevent an endless loop if the error was triggered by a command
 	Cbuf_Clear(cmd_local->cbuf);
 
+	// DP8 TODO: send a disconnect message indicating we errored out, see Sys_Abort() and Sys_HandleCrash()
 	CL_Disconnect();
 	cls.demonum = -1;
 
 	hosterror = false;
+
+	// restore configured outfd
+	sys.outfd = outfd;
 
 	Host_AbortCurrentFrame();
 }
@@ -293,7 +301,6 @@ static void Host_InitLocal (void)
 
 char engineversion[128];
 
-qbool sys_nostdout = false;
 
 static qfile_t *locksession_fh = NULL;
 static qbool locksession_run = false;
@@ -338,7 +345,7 @@ void Host_LockSession(void)
 			}
 			else
 			{
-				Sys_Error("session lock %s could not be acquired. Please run with -sessionid and an unique session name.\n", p);
+				Sys_Abort("session lock %s could not be acquired. Please run with -sessionid and an unique session name.\n", p);
 			}
 		}
 	}
@@ -383,7 +390,7 @@ static void Host_Init (void)
 	host.state = host_init;
 
 	if (setjmp(host.abortframe)) // Huh?!
-		Sys_Error("Engine initialization failed. Check the console (if available) for additional information.\n");
+		Sys_Abort("Engine initialization failed. Check the console (if available) for additional information.\n");
 
 	if (Sys_CheckParm("-profilegameonly"))
 		Sys_AllowProfiling(false);
@@ -423,10 +430,6 @@ static void Host_Init (void)
 		gl_paranoid.integer = 1;gl_paranoid.string = "1";
 		gl_printcheckerror.integer = 1;gl_printcheckerror.string = "1";
 	}
-
-// COMMANDLINEOPTION: Console: -nostdout disables text output to the terminal the game was launched from
-	if (Sys_CheckParm("-nostdout"))
-		sys_nostdout = 1;
 
 	// -dedicated is checked in SV_ServerOptions() but that's too late for Cvar_RegisterVariable() to skip all the client-only cvars
 	if (Sys_CheckParm ("-dedicated") || !cl_available)
@@ -571,25 +574,13 @@ static void Host_Init (void)
 ===============
 Host_Shutdown
 
-FIXME: this is a callback from Sys_Quit and Sys_Error.  It would be better
-to run quit through here before the final handoff to the sys code.
+Cleanly shuts down after the main loop exits.
 ===============
 */
-void Host_Shutdown(void)
+static void Host_Shutdown(void)
 {
-	static qbool isdown = false;
-
-	if (isdown)
-	{
-		Con_Print(CON_WARN "recursive shutdown\n");
-		return;
-	}
-	if (setjmp(host.abortframe))
-	{
-		Con_Print(CON_WARN "aborted the quitting frame?!?\n");
-		return;
-	}
-	isdown = true;
+	if (Sys_CheckParm("-profilegameonly"))
+		Sys_AllowProfiling(false);
 
 	if(cls.state != ca_dedicated)
 		CL_Shutdown();
@@ -722,5 +713,5 @@ void Host_Main(void)
 		host.sleeptime = Sys_Sleep(sleeptime);
 	}
 
-	return;
+	Host_Shutdown();
 }

@@ -217,7 +217,7 @@ void Mod_UnloadModel (model_t *mod)
 	if (developer_loading.integer)
 		Con_Printf("unloading model %s\n", mod->name);
 
-	strlcpy(name, mod->name, sizeof(name));
+	dp_strlcpy(name, mod->name, sizeof(name));
 	parentmodel = mod->brush.parentmodel;
 	used = mod->used;
 	if (mod->mempool)
@@ -246,7 +246,7 @@ void Mod_UnloadModel (model_t *mod)
 	// clear the struct to make it available
 	memset(mod, 0, sizeof(model_t));
 	// restore the fields we want to preserve
-	strlcpy(mod->name, name, sizeof(mod->name));
+	dp_strlcpy(mod->name, name, sizeof(mod->name));
 	mod->brush.parentmodel = parentmodel;
 	mod->used = used;
 	mod->loaded = false;
@@ -315,7 +315,7 @@ static int Mod_FrameGroupify_ParseGroups(const char *buf, mod_framegroupify_pars
 		name[0] = 0;
 		if (bufptr && strcmp(com_token, "\n"))
 		{
-			strlcpy(name, com_token, sizeof(name));
+			dp_strlcpy(name, com_token, sizeof(name));
 			COM_ParseToken_Simple(&bufptr, true, false, true);
 		}
 
@@ -338,7 +338,7 @@ static void Mod_FrameGroupify_ParseGroups_Store (unsigned int i, int start, int 
 	model_t *mod = (model_t *) pass;
 	animscene_t *anim = &mod->animscenes[i];
 	if(name)
-		strlcpy(anim->name, name, sizeof(anim[i].name));
+		dp_strlcpy(anim->name, name, sizeof(anim[i].name));
 	else
 		dpsnprintf(anim->name, sizeof(anim[i].name), "groupified_%d_anim", i);
 	anim->firstframe = bound(0, start, mod->num_poses - 1);
@@ -550,7 +550,7 @@ model_t *Mod_LoadModel(model_t *mod, qbool crash, qbool checkdisk)
 			Con_Printf(CON_ERROR "Mod_LoadModel: model \"%s\" is of unknown/unsupported type\n", mod->name);
 	}
 	else if (crash)
-		// LadyHavoc: Sys_Error was *ANNOYING*
+		// LadyHavoc: Sys_Abort was *ANNOYING*
 		Con_Printf (CON_ERROR "Mod_LoadModel: %s not found\n", mod->name);
 
 	// no fatal errors occurred, so this model is ready to use.
@@ -618,7 +618,7 @@ model_t *Mod_FindName(const char *name, const char *parentname)
 
 	// no match found, create a new one
 	mod = (model_t *) Mem_ExpandableArray_AllocRecord(&models);
-	strlcpy(mod->name, name, sizeof(mod->name));
+	dp_strlcpy(mod->name, name, sizeof(mod->name));
 	if (parentname[0])
 		mod->brush.parentmodel = Mod_FindName(parentname, NULL);
 	else
@@ -1044,6 +1044,12 @@ void Mod_ShadowMesh_AddMesh(shadowmesh_t *mesh, const float *vertex3f, int numtr
 
 	for (i = 0;i < numtris;i++)
 	{
+		if ((mesh->numtriangles * 3 + 2) * sizeof(int) + 1 >= ((memheader_t *)((unsigned char *)mesh->element3i - sizeof(memheader_t)))->size)
+		{
+			// FIXME: we didn't allocate enough space for all the tris, see R_Mod_CompileShadowMap
+			Con_Print(CON_WARN "Mod_ShadowMesh_AddMesh: insufficient memory allocated!\n");
+			return;
+		}
 		mesh->element3i[mesh->numtriangles * 3 + 0] = Mod_ShadowMesh_AddVertex(mesh, vertex3f + 3 * element3i[i * 3 + 0]);
 		mesh->element3i[mesh->numtriangles * 3 + 1] = Mod_ShadowMesh_AddVertex(mesh, vertex3f + 3 * element3i[i * 3 + 1]);
 		mesh->element3i[mesh->numtriangles * 3 + 2] = Mod_ShadowMesh_AddVertex(mesh, vertex3f + 3 * element3i[i * 3 + 2]);
@@ -1512,7 +1518,7 @@ void Mod_LoadQ3Shaders(void)
 					// name
 					j = (int)strlen(com_token)+1;
 					custsurfaceparmnames[numcustsurfaceflags] = (char *)Mem_Alloc(tempmempool, j);
-					strlcpy(custsurfaceparmnames[numcustsurfaceflags], com_token, j+1);
+					dp_strlcpy(custsurfaceparmnames[numcustsurfaceflags], com_token, j+1);
 					// value
 					if (COM_ParseToken_QuakeC(&text, false))
 						custsurfaceflags[numcustsurfaceflags] = strtol(com_token, NULL, 0);
@@ -1574,7 +1580,7 @@ void Mod_LoadQ3Shaders(void)
 			// WHEN ADDING DEFAULTS HERE, REMEMBER TO PUT DEFAULTS IN ALL LOADERS
 			// JUST GREP FOR "specularscalemod = 1".
 
-			strlcpy(shader.name, com_token, sizeof(shader.name));
+			dp_strlcpy(shader.name, com_token, sizeof(shader.name));
 			if (!COM_ParseToken_QuakeC(&text, false) || strcasecmp(com_token, "{"))
 			{
 				Con_DPrintf("%s parsing error - expected \"{\", found \"%s\"\n", search->filenames[fileindex], com_token);
@@ -1617,7 +1623,7 @@ void Mod_LoadQ3Shaders(void)
 								if(j == 0 && !strncasecmp(com_token, "dp_", 3))
 									dpsnprintf(parameter[j], sizeof(parameter[j]), "dp%s", &com_token[3]);
 								else
-									strlcpy(parameter[j], com_token, sizeof(parameter[j]));
+									dp_strlcpy(parameter[j], com_token, sizeof(parameter[j]));
 								numparameters = j + 1;
 							}
 							if (!COM_ParseToken_QuakeC(&text, true))
@@ -1872,7 +1878,7 @@ void Mod_LoadQ3Shaders(void)
 						if(j == 0 && !strncasecmp(com_token, "dp_", 3))
 							dpsnprintf(parameter[j], sizeof(parameter[j]), "dp%s", &com_token[3]);
 						else
-							strlcpy(parameter[j], com_token, sizeof(parameter[j]));
+							dp_strlcpy(parameter[j], com_token, sizeof(parameter[j]));
 						numparameters = j + 1;
 					}
 					if (!COM_ParseToken_QuakeC(&text, true))
@@ -1982,7 +1988,7 @@ void Mod_LoadQ3Shaders(void)
 				else if (!strcasecmp(parameter[0], "dpnortlight"))
 					shader.dpnortlight = true;
 				else if (!strcasecmp(parameter[0], "dpreflectcube"))
-					strlcpy(shader.dpreflectcube, parameter[1], sizeof(shader.dpreflectcube));
+					dp_strlcpy(shader.dpreflectcube, parameter[1], sizeof(shader.dpreflectcube));
 				else if (!strcasecmp(parameter[0], "dpmeshcollisions"))
 					shader.dpmeshcollisions = true;
 				// this sets dpshaderkill to true if dpshaderkillifcvarzero was used, and to false if dpnoshaderkillifcvarzero was used
@@ -2041,14 +2047,14 @@ void Mod_LoadQ3Shaders(void)
 				{
 					// some q3 skies don't have the sky parm set
 					shader.surfaceparms |= Q3SURFACEPARM_SKY;
-					strlcpy(shader.skyboxname, parameter[1], sizeof(shader.skyboxname));
+					dp_strlcpy(shader.skyboxname, parameter[1], sizeof(shader.skyboxname));
 				}
 				else if (!strcasecmp(parameter[0], "skyparms") && numparameters >= 2)
 				{
 					// some q3 skies don't have the sky parm set
 					shader.surfaceparms |= Q3SURFACEPARM_SKY;
 					if (!atoi(parameter[1]) && strcasecmp(parameter[1], "-"))
-						strlcpy(shader.skyboxname, parameter[1], sizeof(shader.skyboxname));
+						dp_strlcpy(shader.skyboxname, parameter[1], sizeof(shader.skyboxname));
 				}
 				else if (!strcasecmp(parameter[0], "cull") && numparameters >= 2)
 				{
@@ -2268,7 +2274,7 @@ qbool Mod_LoadTextureFromQ3Shader(mempool_t *mempool, const char *modelname, tex
 	shader_t *shader;
 	if (!name)
 		name = "";
-	strlcpy(texture->name, name, sizeof(texture->name));
+	dp_strlcpy(texture->name, name, sizeof(texture->name));
 	texture->basealpha = 1.0f;
 	shader = name[0] ? Mod_LookupQ3Shader(name) : NULL;
 
@@ -2649,7 +2655,7 @@ void Mod_LoadCustomMaterial(mempool_t *mempool, texture_t *texture, const char *
 	if (!(materialflags & (MATERIALFLAG_WALL | MATERIALFLAG_SKY)))
 		Con_DPrintf("^1Custom texture ^3\"%s\" does not have MATERIALFLAG_WALL set\n", texture->name);
 
-	strlcpy(texture->name, name, sizeof(texture->name));
+	dp_strlcpy(texture->name, name, sizeof(texture->name));
 	texture->basealpha = 1.0f;
 	texture->basematerialflags = materialflags;
 	texture->supercontents = supercontents;
@@ -2749,7 +2755,7 @@ tag_torso,
 			do
 			{
 				if (words < 10)
-					strlcpy(word[words++], com_token, sizeof (word[0]));
+					dp_strlcpy(word[words++], com_token, sizeof (word[0]));
 				else
 					wordsoverflow = true;
 			}
@@ -2769,8 +2775,8 @@ tag_torso,
 					skinfileitem = (skinfileitem_t *)Mem_Alloc(loadmodel->mempool, sizeof(skinfileitem_t));
 					skinfileitem->next = skinfile->items;
 					skinfile->items = skinfileitem;
-					strlcpy (skinfileitem->name, word[1], sizeof (skinfileitem->name));
-					strlcpy (skinfileitem->replacement, word[2], sizeof (skinfileitem->replacement));
+					dp_strlcpy (skinfileitem->name, word[1], sizeof (skinfileitem->name));
+					dp_strlcpy (skinfileitem->replacement, word[2], sizeof (skinfileitem->replacement));
 				}
 				else
 					Con_Printf("Mod_LoadSkinFiles: parsing error in file \"%s_%i.skin\" on line #%i: wrong number of parameters to command \"%s\", see documentation in DP_GFX_SKINFILES extension in dpextensions.qc\n", loadmodel->name, i, line, word[0]);
@@ -2788,8 +2794,8 @@ tag_torso,
 				skinfileitem = (skinfileitem_t *)Mem_Alloc(loadmodel->mempool, sizeof(skinfileitem_t));
 				skinfileitem->next = skinfile->items;
 				skinfile->items = skinfileitem;
-				strlcpy (skinfileitem->name, word[0], sizeof (skinfileitem->name));
-				strlcpy (skinfileitem->replacement, word[2], sizeof (skinfileitem->replacement));
+				dp_strlcpy (skinfileitem->name, word[0], sizeof (skinfileitem->name));
+				dp_strlcpy (skinfileitem->replacement, word[2], sizeof (skinfileitem->replacement));
 			}
 			else
 				Con_Printf("Mod_LoadSkinFiles: parsing error in file \"%s_%i.skin\" on line #%i: does not look like tag or mesh specification, or replace command, see documentation in DP_GFX_SKINFILES extension in dpextensions.qc\n", loadmodel->name, i, line);
@@ -3058,7 +3064,7 @@ static void Mod_Decompile_OBJ(model_t *model, const char *filename, const char *
 		if (textureindex >= maxtextures)
 			continue; // just a precaution
 		textureindex = counttextures++;
-		strlcpy(texturenames + textureindex * MAX_QPATH, texname, MAX_QPATH);
+		dp_strlcpy(texturenames + textureindex * MAX_QPATH, texname, MAX_QPATH);
 		if (outbufferpos >= outbuffermax >> 1)
 		{
 			outbuffermax *= 2;
@@ -3333,7 +3339,7 @@ static void Mod_Decompile_f(cmd_state_t *cmd)
 		return;
 	}
 
-	strlcpy(inname, Cmd_Argv(cmd, 1), sizeof(inname));
+	dp_strlcpy(inname, Cmd_Argv(cmd, 1), sizeof(inname));
 	FS_StripExtension(inname, basename, sizeof(basename));
 
 	mod = Mod_ForName(inname, false, true, inname[0] == '*' ? cl.model_name[1] : NULL);
@@ -3374,7 +3380,7 @@ static void Mod_Decompile_f(cmd_state_t *cmd)
 		if (l > 0) dpmtextsize += l;
 		for (i = 0;i < mod->numframes;i = j)
 		{
-			strlcpy(animname, mod->animscenes[i].name, sizeof(animname));
+			dp_strlcpy(animname, mod->animscenes[i].name, sizeof(animname));
 			first = mod->animscenes[i].firstframe;
 			if (mod->animscenes[i].framecount > 1)
 			{
@@ -3395,7 +3401,7 @@ static void Mod_Decompile_f(cmd_state_t *cmd)
 				count = mod->num_poses - first;
 				for (j = i + 1;j < mod->numframes;j++)
 				{
-					strlcpy(animname2, mod->animscenes[j].name, sizeof(animname2));
+					dp_strlcpy(animname2, mod->animscenes[j].name, sizeof(animname2));
 					for (l = 0, k = (int)strlen(animname2);animname2[l];l++)
 						if(animname2[l] < '0' || animname2[l] > '9')
 							k = l + 1;
@@ -3410,7 +3416,7 @@ static void Mod_Decompile_f(cmd_state_t *cmd)
 				}
 				// if it's only one frame, use the original frame name
 				if (j == i + 1)
-					strlcpy(animname, mod->animscenes[i].name, sizeof(animname));
+					dp_strlcpy(animname, mod->animscenes[i].name, sizeof(animname));
 				
 			}
 			dpsnprintf(outname, sizeof(outname), "%s_decompiled/%s.smd", basename, animname);
@@ -4437,7 +4443,7 @@ static void Mod_GenerateLightmaps_f(cmd_state_t *cmd)
 void Mod_Mesh_Create(model_t *mod, const char *name)
 {
 	memset(mod, 0, sizeof(*mod));
-	strlcpy(mod->name, name, sizeof(mod->name));
+	dp_strlcpy(mod->name, name, sizeof(mod->name));
 	mod->mempool = Mem_AllocPool(name, 0, NULL);
 	mod->texturepool = R_AllocTexturePool();
 	mod->Draw = R_Mod_Draw;
@@ -4461,7 +4467,8 @@ void Mod_Mesh_Reset(model_t *mod)
 	mod->num_surfaces = 0;
 	mod->surfmesh.num_vertices = 0;
 	mod->surfmesh.num_triangles = 0;
-	memset(mod->surfmesh.data_vertexhash, -1, mod->surfmesh.num_vertexhashsize * sizeof(*mod->surfmesh.data_vertexhash));
+	if (mod->surfmesh.data_vertexhash) // UBSan: memset arg 1 isn't allowed to be null, but sometimes this is NULL.
+		memset(mod->surfmesh.data_vertexhash, -1, mod->surfmesh.num_vertexhashsize * sizeof(*mod->surfmesh.data_vertexhash));
 	mod->DrawSky = NULL; // will be set if a texture needs it
 	mod->DrawAddWaterPlanes = NULL; // will be set if a texture needs it
 }

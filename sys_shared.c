@@ -38,6 +38,7 @@
 #include "thread.h"
 #include "libcurl.h"
 
+
 sys_t sys;
 
 static char sys_timestring[128];
@@ -54,30 +55,6 @@ char *Sys_TimeString(const char *timeformat)
 	return sys_timestring;
 }
 
-
-void Sys_Quit (int returnvalue)
-{
-	// Unlock mutexes because the quit command may jump directly here, causing a deadlock
-	if ((cmd_local)->cbuf->lock)
-		Cbuf_Unlock((cmd_local)->cbuf);
-	SV_UnlockThreadMutex();
-	TaskQueue_Frame(true);
-
-	if (Sys_CheckParm("-profilegameonly"))
-		Sys_AllowProfiling(false);
-	host.state = host_shutdown;
-	Host_Shutdown();
-
-#ifdef __ANDROID__
-	Sys_AllowProfiling(false);
-#endif
-#ifndef WIN32
-	fcntl (0, F_SETFL, fcntl (0, F_GETFL, 0) & ~O_NONBLOCK);
-#endif
-	fflush(stdout);
-
-	exit(returnvalue);
-}
 
 #ifdef __cplusplus
 extern "C"
@@ -205,13 +182,13 @@ notfound:
 	if (!dllhandle && strrchr(sys.argv[0], '/'))
 	{
 		char path[MAX_OSPATH];
-		strlcpy(path, sys.argv[0], sizeof(path));
+		dp_strlcpy(path, sys.argv[0], sizeof(path));
 		strrchr(path, '/')[1] = 0;
 		for (i = 0; dllnames[i] != NULL; i++)
 		{
 			char temp[MAX_OSPATH];
-			strlcpy(temp, path, sizeof(temp));
-			strlcat(temp, dllnames[i], sizeof(temp));
+			dp_strlcpy(temp, path, sizeof(temp));
+			dp_strlcat(temp, dllnames[i], sizeof(temp));
 			Con_DPrintf (" \"%s\"", temp);
 
 			if(Sys_LoadLibrary(temp, &dllhandle))
@@ -329,6 +306,11 @@ static cvar_t sys_usequeryperformancecounter = {CF_SHARED | CF_ARCHIVE, "sys_use
 static cvar_t sys_useclockgettime = {CF_SHARED | CF_ARCHIVE, "sys_useclockgettime", "1", "use POSIX clock_gettime function (not adjusted by NTP on some older Linux kernels) for timing rather than gettimeofday (which has issues if the system time is stepped by ntpdate, or apparently on some Xen installations)"};
 #endif
 
+static cvar_t sys_stdout = {CF_SHARED, "sys_stdout", "1", "0: nothing is written to stdout (-nostdout cmdline option sets this), 1: normal messages are written to stdout, 2: normal messages are written to stderr (-stderr cmdline option sets this)"};
+#ifndef WIN32
+static cvar_t sys_stdout_blocks = {CF_SHARED, "sys_stdout_blocks", "0", "1: writes to stdout and stderr streams will block (causing a stutter or complete halt) if the buffer is full, ensuring no messages are lost at a price"};
+#endif
+
 static double benchmark_time; // actually always contains an integer amount of milliseconds, will eventually "overflow"
 
 /*
@@ -354,6 +336,17 @@ int Sys_CheckParm (const char *parm)
 	return 0;
 }
 
+static void Sys_UpdateOutFD_c(cvar_t *var)
+{
+	switch (sys_stdout.integer)
+	{
+		case 0: sys.outfd = -1; break;
+		default:
+		case 1: sys.outfd = fileno(stdout); break;
+		case 2: sys.outfd = fileno(stderr); break;
+	}
+}
+
 void Sys_Init_Commands (void)
 {
 	Cvar_RegisterVariable(&sys_debugsleep);
@@ -372,6 +365,11 @@ void Sys_Init_Commands (void)
 #if HAVE_CLOCKGETTIME
 	Cvar_RegisterVariable(&sys_useclockgettime);
 #endif
+	Cvar_RegisterVariable(&sys_stdout);
+	Cvar_RegisterCallback(&sys_stdout, Sys_UpdateOutFD_c);
+#ifndef WIN32
+	Cvar_RegisterVariable(&sys_stdout_blocks);
+#endif
 }
 
 double Sys_DirtyTime(void)
@@ -384,7 +382,7 @@ double Sys_DirtyTime(void)
 		double old_benchmark_time = benchmark_time;
 		benchmark_time += 1;
 		if(benchmark_time == old_benchmark_time)
-			Sys_Error("sys_usenoclockbutbenchmark cannot run any longer, sorry");
+			Sys_Abort("sys_usenoclockbutbenchmark cannot run any longer, sorry");
 		return benchmark_time * 0.000001;
 	}
 #if HAVE_QUERYPERFORMANCECOUNTER
@@ -465,7 +463,7 @@ double Sys_DirtyTime(void)
 	}
 #else
 	// fallback for using the SDL timer if no other timer is available
-	// this calls Sys_Error() if not linking against SDL
+	// this calls Sys_Abort() if not linking against SDL
 	return (double) Sys_SDL_GetTicks() / 1000.0;
 #endif
 }
@@ -494,7 +492,7 @@ double Sys_Sleep(double time)
 		double old_benchmark_time = benchmark_time;
 		benchmark_time += microseconds;
 		if(benchmark_time == old_benchmark_time)
-			Sys_Error("sys_usenoclockbutbenchmark cannot run any longer, sorry");
+			Sys_Abort("sys_usenoclockbutbenchmark cannot run any longer, sorry");
 		return 0;
 	}
 
@@ -567,7 +565,8 @@ STDIO
 ===============================================================================
 */
 
-void Sys_Print(const char *text)
+// NOTE: use only POSIX async-signal-safe library functions here (see: man signal-safety)
+void Sys_Print(const char *text, size_t textlen)
 {
 #ifdef __ANDROID__
 	if (developer.integer > 0)
@@ -581,37 +580,40 @@ void Sys_Print(const char *text)
 	// BUG: for some reason, NDELAY also affects stdout (1) when used on stdin (0).
 	// this is because both go to /dev/tty by default!
 	{
-		int origflags = fcntl (sys.outfd, F_GETFL, 0);
-		fcntl (sys.outfd, F_SETFL, origflags & ~O_NONBLOCK);
+		int origflags = fcntl(sys.outfd, F_GETFL, 0);
+		if (sys_stdout_blocks.integer)
+			fcntl(sys.outfd, F_SETFL, origflags & ~O_NONBLOCK);
   #else
     #define write _write
   #endif
 		while(*text)
 		{
-			fs_offset_t written = (fs_offset_t)write(sys.outfd, text, (int)strlen(text));
+			fs_offset_t written = (fs_offset_t)write(sys.outfd, text, textlen);
 			if(written <= 0)
 				break; // sorry, I cannot do anything about this error - without an output
 			text += written;
 		}
   #ifndef WIN32
-		fcntl (sys.outfd, F_SETFL, origflags);
+		if (sys_stdout_blocks.integer)
+			fcntl(sys.outfd, F_SETFL, origflags);
 	}
   #endif
 	//fprintf(stdout, "%s", text);
 #endif
 }
 
-/// for the console to report failures inside Con_Printf()
 void Sys_Printf(const char *fmt, ...)
 {
 	va_list argptr;
 	char msg[MAX_INPUTLINE];
+	int msglen;
 
 	va_start(argptr,fmt);
-	dpvsnprintf(msg,sizeof(msg),fmt,argptr);
+	msglen = dpvsnprintf(msg, sizeof(msg), fmt, argptr);
 	va_end(argptr);
 
-	Sys_Print(msg);
+	if (msglen >= 0)
+		Sys_Print(msg, msglen);
 }
 
 /// Reads a line from POSIX stdin or the Windows console
@@ -672,26 +674,48 @@ Startup and Shutdown
 ===============================================================================
 */
 
-void Sys_Error (const char *error, ...)
+void Sys_Abort (const char *error, ...)
 {
 	va_list argptr;
 	char string[MAX_INPUTLINE];
+	int i;
 
-// change stdin to non blocking
+	// set output to blocking stderr
+	sys.outfd = fileno(stderr);
 #ifndef WIN32
-	fcntl (0, F_SETFL, fcntl (0, F_GETFL, 0) & ~O_NONBLOCK);
+	fcntl(sys.outfd, F_SETFL, fcntl(sys.outfd, F_GETFL, 0) & ~O_NONBLOCK);
 #endif
 
 	va_start (argptr,error);
 	dpvsnprintf (string, sizeof (string), error, argptr);
 	va_end (argptr);
 
-	Con_Printf(CON_ERROR "Engine Error: %s\n", string);
+	Con_Printf(CON_ERROR "Engine Abort: %s\n^9%s\n", string, engineversion);
 
-	// don't want a dead window left blocking the OS UI or the crash dialog
-	Host_Shutdown();
+	dp_strlcat(string, "\n\n", sizeof(string));
+	dp_strlcat(string, engineversion, sizeof(string));
 
-	Sys_SDL_Dialog("Engine Error", string);
+	// Most shutdown funcs can't be called here as they could error while we error.
+
+	// DP8 TODO: send a disconnect message indicating we aborted, see Host_Error() and Sys_HandleCrash()
+
+	if (cls.demorecording)
+		CL_Stop_f(cmd_local);
+	if (sv.active)
+	{
+		sv.active = false; // make SV_DropClient() skip the QC stuff to avoid recursive errors
+		for (i = 0, host_client = svs.clients;i < svs.maxclients;i++, host_client++)
+			if (host_client->active)
+				SV_DropClient(false, "Server abort!"); // closes demo file
+	}
+	// don't want a dead window left blocking the OS UI or the abort dialog
+	VID_Shutdown();
+	S_StopAllSounds();
+
+	host.state = host_failed; // make Sys_HandleSignal() call exit()
+	Sys_SDL_Dialog("Engine Abort", string);
+
+	fflush(stderr);
 
 	exit (1);
 }
@@ -890,10 +914,33 @@ void Sys_MakeProcessMean (void)
 }
 #endif
 
+
+static const char *Sys_SigDesc(int sig)
+{
+	switch (sig)
+	{
+		// Windows only supports the C99 signals
+		case SIGINT:  return "Interrupt";
+		case SIGILL:  return "Illegal instruction";
+		case SIGABRT: return "Aborted";
+		case SIGFPE:  return "Floating point exception";
+		case SIGSEGV: return "Segmentation fault";
+		case SIGTERM: return "Termination";
+#ifndef WIN32
+		// POSIX has several others worth catching
+		case SIGHUP:  return "Hangup";
+		case SIGQUIT: return "Quit";
+		case SIGBUS:  return "Bus error (bad memory access)";
+		case SIGPIPE: return "Broken pipe";
+#endif
+		default:      return "Yo dawg, we bugged out while bugging out";
+	}
+}
+
 /** Halt and try not to catch fire.
  * Writing to any file could corrupt it,
  * any uneccessary code could crash while we crash.
- * No malloc() (libgcc should be loaded already) or Con_Printf() allowed here.
+ * Try to use only POSIX async-signal-safe library functions here (see: man signal-safety).
  */
 static void Sys_HandleCrash(int sig)
 {
@@ -902,62 +949,89 @@ static void Sys_HandleCrash(int sig)
 	#include <execinfo.h>
 	void *stackframes[32];
 	int framecount = backtrace(stackframes, 32);
+	char **btstrings;
 #endif
+	char dialogtext[3072];
+	const char *sigdesc = Sys_SigDesc(sig);
 
-	// Windows doesn't have strsignal()
-	const char *sigdesc;
-	switch (sig)
-	{
-#ifndef WIN32 // or SIGBUS
-		case SIGBUS:  sigdesc = "Bus error"; break;
-#endif
-		case SIGILL:  sigdesc = "Illegal instruction"; break;
-		case SIGABRT: sigdesc = "Aborted"; break;
-		case SIGFPE:  sigdesc = "Floating point exception"; break;
-		case SIGSEGV: sigdesc = "Segmentation fault"; break;
-		default:      sigdesc = "Yo dawg, we hit a bug while hitting a bug";
-	}
-
-	fprintf(stderr, "\n\n\e[1;37;41m    Engine Crash: %s (%d)    \e[m\n", sigdesc, sig);
-#if __GLIBC__ >= 2 && __GLIBC_MINOR__ >= 1
+	// set output to blocking stderr and print header, backtrace, version
+	sys.outfd = fileno(stderr); // not async-signal-safe :(
+#ifndef WIN32
+	fcntl(sys.outfd, F_SETFL, fcntl(sys.outfd, F_GETFL, 0) & ~O_NONBLOCK);
+	Sys_Print("\n\n\e[1;37;41m    Engine Crash: ", 30);
+	Sys_Print(sigdesc, strlen(sigdesc));
+	Sys_Print("    \e[m\n", 8);
+  #if __GLIBC__ >= 2 && __GLIBC_MINOR__ >= 1
 	// the first two addresses will be in this function and in signal() in libc
-	backtrace_symbols_fd(stackframes + 2, framecount - 2, fileno(stderr));
+	backtrace_symbols_fd(stackframes + 2, framecount - 2, sys.outfd);
+  #endif
+	Sys_Print("\e[1m", 4);
+	Sys_Print(engineversion, strlen(engineversion));
+	Sys_Print("\e[m\n", 4);
+#else // Windows console doesn't support colours
+	Sys_Print("\n\nEngine Crash: ", 16);
+	Sys_Print(sigdesc, strlen(sigdesc));
+	Sys_Print("\n", 1);
+	Sys_Print(engineversion, strlen(engineversion));
+	Sys_Print("\n", 1);
 #endif
-	fprintf(stderr, "\e[1m%s\e[m\n", engineversion);
 
-	// DP8 TODO: send a disconnect message indicating we crashed, see CL_DisconnectEx()
+	// DP8 TODO: send a disconnect message indicating we crashed, see Sys_Abort() and Host_Error()
 
 	// don't want a dead window left blocking the OS UI or the crash dialog
 	VID_Shutdown();
 	S_StopAllSounds();
 
-	Sys_SDL_Dialog("Engine Crash", sigdesc);
+	// prepare the dialogtext: signal, backtrace, version
+	// the dp_st* funcs are POSIX async-signal-safe IF we don't trigger their warnings
+	dp_strlcpy(dialogtext, sigdesc, sizeof(dialogtext));
+	dp_strlcat(dialogtext, "\n\n", sizeof(dialogtext));
+#if __GLIBC__ >= 2 && __GLIBC_MINOR__ >= 1
+	btstrings = backtrace_symbols(stackframes + 2, framecount - 2); // calls malloc :(
+	if (btstrings)
+		for (int i = 0; i < framecount - 2; ++i)
+		{
+			dp_strlcat(dialogtext, btstrings[i], sizeof(dialogtext));
+			dp_strlcat(dialogtext, "\n", sizeof(dialogtext));
+		}
+#endif
+	dp_strlcat(dialogtext, "\n", sizeof(dialogtext));
+	dp_strlcat(dialogtext, engineversion, sizeof(dialogtext));
 
-	exit (sig);
+	host.state = host_failed; // make Sys_HandleSignal() call _Exit()
+	Sys_SDL_Dialog("Engine Crash", dialogtext);
+
+	fflush(stderr); // not async-signal-safe :(
+	_Exit(sig);
 }
 
 static void Sys_HandleSignal(int sig)
 {
-#ifdef WIN32
-	// Windows users will likely never see this so no point replicating strsignal()
-	Con_Printf("\nReceived signal %d, exiting...\n", sig);
-#else
-	Con_Printf("\nReceived %s signal (%d), exiting...\n", strsignal(sig), sig);
-#endif
+	const char *sigdesc = Sys_SigDesc(sig);
+	Sys_Print("\nReceived ", 10);
+	Sys_Print(sigdesc, strlen(sigdesc));
+	Sys_Print(" signal, exiting...\n", 20);
+	if (host.state == host_failed)
+	{
+		// user is trying to kill the process while the dialog is open
+		fflush(stderr); // not async-signal-safe :(
+		_Exit(sig);
+	}
 	host.state = host_shutdown;
 }
 
 /// SDL2 only handles SIGINT and SIGTERM by default and doesn't log anything
 static void Sys_InitSignals(void)
 {
-// Windows docs say its signal() only accepts these ones
+	// Windows only supports the C99 signals
+	signal(SIGINT,  Sys_HandleSignal);
+	signal(SIGILL,  Sys_HandleCrash);
 	signal(SIGABRT, Sys_HandleCrash);
 	signal(SIGFPE,  Sys_HandleCrash);
-	signal(SIGILL,  Sys_HandleCrash);
-	signal(SIGINT,  Sys_HandleSignal);
 	signal(SIGSEGV, Sys_HandleCrash);
 	signal(SIGTERM, Sys_HandleSignal);
 #ifndef WIN32
+	// POSIX has several others worth catching
 	signal(SIGHUP,  Sys_HandleSignal);
 	signal(SIGQUIT, Sys_HandleSignal);
 	signal(SIGBUS,  Sys_HandleCrash);
@@ -970,21 +1044,25 @@ int main (int argc, char **argv)
 	sys.argc = argc;
 	sys.argv = (const char **)argv;
 
+	// COMMANDLINEOPTION: Console: -nostdout disables text output to the terminal the game was launched from
 	// COMMANDLINEOPTION: -noterminal disables console output on stdout
-	if(Sys_CheckParm("-noterminal"))
-		sys.outfd = -1;
+	if(Sys_CheckParm("-noterminal") || Sys_CheckParm("-nostdout"))
+		sys_stdout.string = "0";
 	// COMMANDLINEOPTION: -stderr moves console output to stderr
 	else if(Sys_CheckParm("-stderr"))
-		sys.outfd = 2;
-	else
-		sys.outfd = 1;
+		sys_stdout.string = "2";
+	// too early for Cvar_SetQuick
+	sys_stdout.value = sys_stdout.integer = atoi(sys_stdout.string);
+	Sys_UpdateOutFD_c(&sys_stdout);
+#ifndef WIN32
+	fcntl(fileno(stdin), F_SETFL, fcntl(fileno(stdin), F_GETFL, 0) | O_NONBLOCK);
+	// stdout/stderr will be set to blocking in Sys_Print() if so configured, or during a fatal error.
+	fcntl(fileno(stdout), F_SETFL, fcntl(fileno(stdout), F_GETFL, 0) | O_NONBLOCK);
+	fcntl(fileno(stderr), F_SETFL, fcntl(fileno(stderr), F_GETFL, 0) | O_NONBLOCK);
+#endif
 
 	sys.selffd = -1;
 	Sys_ProvideSelfFD(); // may call Con_Printf() so must be after sys.outfd is set
-
-#ifndef WIN32
-	fcntl(fileno(stdin), F_SETFL, fcntl (fileno(stdin), F_GETFL, 0) | O_NONBLOCK);
-#endif
 
 #ifdef __ANDROID__
 	Sys_AllowProfiling(true);
@@ -994,7 +1072,16 @@ int main (int argc, char **argv)
 
 	Host_Main();
 
-	Sys_Quit(0);
+#ifdef __ANDROID__
+	Sys_AllowProfiling(false);
+#endif
+
+#ifndef WIN32
+	fcntl(fileno(stdout), F_SETFL, fcntl(fileno(stdout), F_GETFL, 0) & ~O_NONBLOCK);
+	fcntl(fileno(stderr), F_SETFL, fcntl(fileno(stderr), F_GETFL, 0) & ~O_NONBLOCK);
+#endif
+	fflush(stdout);
+	fflush(stderr);
 
 	return 0;
 }

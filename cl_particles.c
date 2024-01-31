@@ -332,7 +332,7 @@ static void CL_Particles_ParseEffectInfo(const char *textstart, const char *text
 				break;
 			if (argc < 16)
 			{
-				strlcpy(argv[argc], com_token, sizeof(argv[argc]));
+				dp_strlcpy(argv[argc], com_token, sizeof(argv[argc]));
 				argc++;
 			}
 		}
@@ -362,7 +362,7 @@ static void CL_Particles_ParseEffectInfo(const char *textstart, const char *text
 				}
 				else
 				{
-					strlcpy(particleeffectname[effectnameindex], argv[1], sizeof(particleeffectname[effectnameindex]));
+					dp_strlcpy(particleeffectname[effectnameindex], argv[1], sizeof(particleeffectname[effectnameindex]));
 					break;
 				}
 			}
@@ -545,15 +545,15 @@ static void CL_Particles_LoadEffectInfo(const char *customfile)
 	memset(particleeffectinfo, 0, sizeof(particleeffectinfo));
 	memset(particleeffectname, 0, sizeof(particleeffectname));
 	for (i = 0;i < EFFECT_TOTAL;i++)
-		strlcpy(particleeffectname[i], standardeffectnames[i], sizeof(particleeffectname[i]));
+		dp_strlcpy(particleeffectname[i], standardeffectnames[i], sizeof(particleeffectname[i]));
 	for (filepass = 0;;filepass++)
 	{
 		if (filepass == 0)
 		{
 			if (customfile)
-				strlcpy(filename, customfile, sizeof(filename));
+				dp_strlcpy(filename, customfile, sizeof(filename));
 			else
-				strlcpy(filename, "effectinfo.txt", sizeof(filename));
+				dp_strlcpy(filename, "effectinfo.txt", sizeof(filename));
 		}
 		else if (filepass == 1)
 		{
@@ -2025,7 +2025,7 @@ static void setuptex(int texnum, unsigned char *data, unsigned char *particletex
 	int basex, basey, w, h, y;
 	CL_Particle_PixelCoordsForTexnum(texnum, &basex, &basey, &w, &h);
 	if(w != PARTICLETEXTURESIZE || h != PARTICLETEXTURESIZE)
-		Sys_Error("invalid particle texture size for autogenerating");
+		Sys_Abort("invalid particle texture size for autogenerating");
 	for (y = 0;y < PARTICLETEXTURESIZE;y++)
 		memcpy(particletexturedata + ((basey + y) * PARTICLEFONTSIZE + basex) * 4, data + y * PARTICLETEXTURESIZE * 4, PARTICLETEXTURESIZE * 4);
 }
@@ -2357,7 +2357,7 @@ static void R_InitParticleTexture (void)
 
 			if (COM_ParseToken_Simple(&bufptr, true, false, true) && strcmp(com_token, "\n"))
 			{
-				strlcpy(texturename, com_token, sizeof(texturename));
+				dp_strlcpy(texturename, com_token, sizeof(texturename));
 				s1 = atof(com_token);
 				if (COM_ParseToken_Simple(&bufptr, true, false, true) && strcmp(com_token, "\n"))
 				{
@@ -2369,9 +2369,9 @@ static void R_InitParticleTexture (void)
 						if (COM_ParseToken_Simple(&bufptr, true, false, true) && strcmp(com_token, "\n"))
 						{
 							t2 = atof(com_token);
-							strlcpy(texturename, "particles/particlefont.tga", sizeof(texturename));
+							dp_strlcpy(texturename, "particles/particlefont.tga", sizeof(texturename));
 							if (COM_ParseToken_Simple(&bufptr, true, false, true) && strcmp(com_token, "\n"))
-								strlcpy(texturename, com_token, sizeof(texturename));
+								dp_strlcpy(texturename, com_token, sizeof(texturename));
 						}
 					}
 				}

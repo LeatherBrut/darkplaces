@@ -47,7 +47,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 typedef struct sizebuf_s
 {
-	qbool	allowoverflow;	///< if false, do a Sys_Error
+	qbool	allowoverflow;	///< if false, do a Sys_Abort
 	qbool	overflowed;		///< set to true if the buffer size failed
 	unsigned char		*data;
 	int			maxsize;
@@ -180,10 +180,14 @@ int MSG_ReadBigLong (sizebuf_t *sb);
 float MSG_ReadLittleFloat (sizebuf_t *sb);
 float MSG_ReadBigFloat (sizebuf_t *sb);
 char *MSG_ReadString (sizebuf_t *sb, char *string, size_t maxstring);
-int MSG_ReadBytes (sizebuf_t *sb, int numbytes, unsigned char *out);
+/// Same as MSG_ReadString except it returns the number of bytes written to *string excluding the \0 terminator.
+size_t MSG_ReadString_len (sizebuf_t *sb, char *string, size_t maxstring);
+size_t MSG_ReadBytes (sizebuf_t *sb, size_t numbytes, unsigned char *out);
 
 #define MSG_ReadChar(sb) ((sb)->readcount >= (sb)->cursize ? ((sb)->badread = true, -1) : (signed char)(sb)->data[(sb)->readcount++])
 #define MSG_ReadByte(sb) ((sb)->readcount >= (sb)->cursize ? ((sb)->badread = true, -1) : (unsigned char)(sb)->data[(sb)->readcount++])
+/// Same as MSG_ReadByte but with no need to copy twice (first to `int` to check for -1) so each byte can be copied directly to a string[]
+#define MSG_ReadByte_opt(sb) ((sb)->readcount >= (sb)->cursize ? ((sb)->badread = true, '\0') : (unsigned char)(sb)->data[(sb)->readcount++])
 #define MSG_ReadShort MSG_ReadLittleShort
 #define MSG_ReadLong MSG_ReadLittleLong
 #define MSG_ReadFloat MSG_ReadLittleFloat
@@ -205,11 +209,11 @@ typedef int (*COM_LineProcessorFunc) (void *passthrough, const char *line, size_
 int COM_Wordwrap(const char *string, size_t length, float continuationSize, float maxWidth, COM_WordWidthFunc_t wordWidth, void *passthroughCW, COM_LineProcessorFunc processLine, void *passthroughPL);
 
 extern char com_token[MAX_INPUTLINE];
-
-int COM_ParseToken_Simple(const char **datapointer, qbool returnnewline, qbool parsebackslash, qbool parsecomments);
-int COM_ParseToken_QuakeC(const char **datapointer, qbool returnnewline);
-int COM_ParseToken_VM_Tokenize(const char **datapointer, qbool returnnewline);
-int COM_ParseToken_Console(const char **datapointer);
+extern unsigned com_token_len;
+qbool COM_ParseToken_Simple(const char **datapointer, qbool returnnewline, qbool parsebackslash, qbool parsecomments);
+qbool COM_ParseToken_QuakeC(const char **datapointer, qbool returnnewline);
+qbool COM_ParseToken_VM_Tokenize(const char **datapointer, qbool returnnewline);
+qbool COM_ParseToken_Console(const char **datapointer);
 
 void COM_Init (void);
 void COM_Shutdown (void);
@@ -225,34 +229,44 @@ char *va(char *buf, size_t buflen, const char *format, ...) DP_FUNC_PRINTF(3);
 #endif
 
 // snprintf and vsnprintf are NOT portable. Use their DP counterparts instead
-#ifdef snprintf
-# undef snprintf
-#endif
+#undef snprintf
 #define snprintf DP_STATIC_ASSERT(0, "snprintf is forbidden for portability reasons. Use dpsnprintf instead.")
-#ifdef vsnprintf
-# undef vsnprintf
-#endif
+#undef vsnprintf
 #define vsnprintf DP_STATIC_ASSERT(0, "vsnprintf is forbidden for portability reasons. Use dpvsnprintf instead.")
 
-// dpsnprintf and dpvsnprintf
-// return the number of printed characters, excluding the final '\0'
-// or return -1 if the buffer isn't big enough to contain the entire string.
-// buffer is ALWAYS null-terminated
+// documentation duplicated deliberately for the benefit of IDEs that support https://www.doxygen.nl/manual/docblocks.html
+/// Returns the number of printed characters, excluding the final '\0'
+/// or returns -1 if the buffer isn't big enough to contain the entire string.
+/// Buffer is ALWAYS null-terminated.
 extern int dpsnprintf (char *buffer, size_t buffersize, const char *format, ...) DP_FUNC_PRINTF(3);
+/// Returns the number of printed characters, excluding the final '\0'
+/// or returns -1 if the buffer isn't big enough to contain the entire string.
+/// Buffer is ALWAYS null-terminated.
 extern int dpvsnprintf (char *buffer, size_t buffersize, const char *format, va_list args);
 
 // A bunch of functions are forbidden for security reasons (and also to please MSVS 2005, for some of them)
 // LadyHavoc: added #undef lines here to avoid warnings in Linux
 #undef strcat
-#define strcat DP_STATIC_ASSERT(0, "strcat is forbidden for security reasons. Use strlcat or memcpy instead.")
+#define strcat DP_STATIC_ASSERT(0, "strcat is forbidden for security reasons. Use dp_strlcat or memcpy instead.")
 #undef strncat
-#define strncat DP_STATIC_ASSERT(0, "strncat is forbidden for security reasons. Use strlcat or memcpy instead.")
+#define strncat DP_STATIC_ASSERT(0, "strncat is forbidden for security reasons. Use dp_strlcat or memcpy instead.")
 #undef strcpy
-#define strcpy DP_STATIC_ASSERT(0, "strcpy is forbidden for security reasons. Use strlcpy or memcpy instead.")
+#define strcpy DP_STATIC_ASSERT(0, "strcpy is forbidden for security reasons. Use dp_strlcpy or memcpy instead.")
 #undef strncpy
-#define strncpy DP_STATIC_ASSERT(0, "strncpy is forbidden for security reasons. Use strlcpy or memcpy instead.")
+#define strncpy DP_STATIC_ASSERT(0, "strncpy is forbidden for security reasons. Use dp_strlcpy or memcpy instead.")
+#undef stpcpy
+#define stpcpy DP_STATIC_ASSERT(0, "stpcpy is forbidden for security reasons. Use dp_stpecpy or memcpy instead.")
+#undef ustpcpy
+#define ustpcpy DP_STATIC_ASSERT(0, "ustpcpy is forbidden for security reasons. Use dp_ustr2stp or memcpy instead.")
+#undef ustr2stp
+#define ustr2stp DP_STATIC_ASSERT(0, "ustr2stp is forbidden for security reasons. Use dp_ustr2stp or memcpy instead.")
 #undef sprintf
 #define sprintf DP_STATIC_ASSERT(0, "sprintf is forbidden for security reasons. Use dpsnprintf instead.")
+
+#undef strlcpy
+#define strlcpy DP_STATIC_ASSERT(0, "strlcpy is forbidden for stability and correctness. See common.h and common.c comments.")
+#undef strlcat
+#define strlcat DP_STATIC_ASSERT(0, "strlcat is forbidden for stability and correctness. See common.h and common.c comments.")
 
 
 //============================================================================
@@ -270,44 +284,24 @@ typedef enum userdirmode_e
 }
 userdirmode_t;
 
-void COM_ToLowerString (const char *in, char *out, size_t size_out);
-void COM_ToUpperString (const char *in, char *out, size_t size_out);
+/// Returns the number of bytes written to *out excluding the \0 terminator.
+size_t COM_ToLowerString(const char *in, char *out, size_t size_out);
+/// Returns the number of bytes written to *out excluding the \0 terminator.
+size_t COM_ToUpperString(const char *in, char *out, size_t size_out);
 int COM_StringBeginsWith(const char *s, const char *match);
-
 int COM_ReadAndTokenizeLine(const char **text, char **argv, int maxargc, char *tokenbuf, int tokenbufsize, const char *commentprefix);
-
 size_t COM_StringLengthNoColors(const char *s, size_t size_s, qbool *valid);
-qbool COM_StringDecolorize(const char *in, size_t size_in, char *out, size_t size_out, qbool escape_carets);
-void COM_ToLowerString (const char *in, char *out, size_t size_out);
-void COM_ToUpperString (const char *in, char *out, size_t size_out);
+size_t COM_StringDecolorize(const char *in, size_t size_in, char *out, size_t size_out, qbool escape_carets);
 
-// strlcat and strlcpy, from OpenBSD
-// Most (all?) BSDs already have them
-#if defined(__OpenBSD__) || defined(__NetBSD__) || defined(__FreeBSD__) || defined(MACOSX)
-# define HAVE_STRLCAT 1
-# define HAVE_STRLCPY 1
-#endif
 
-#ifndef HAVE_STRLCAT
-/*!
- * Appends src to string dst of size dsize (unlike strncat, dsize is the
- * full size of dst, not space left).  At most dsize-1 characters
- * will be copied.  Always NUL terminates (unless dsize <= strlen(dst)).
- * Returns strlen(src) + MIN(dsize, strlen(initial dst)).
- * If retval >= dsize, truncation occurred.
- */
-size_t strlcat(char *dst, const char *src, size_t dsize);
-#endif  // #ifndef HAVE_STRLCAT
 
-#ifndef HAVE_STRLCPY
-/*!
- * Copy string src to buffer dst of size dsize.  At most dsize-1
- * chars will be copied.  Always NUL terminates (unless dsize == 0).
- * Returns strlen(src); if retval >= dsize, truncation occurred.
- */
-size_t strlcpy(char *dst, const char *src, size_t dsize);
+#define dp_strlcpy(dst, src, dsize) dp__strlcpy(dst, src, dsize, __func__, __LINE__)
+#define dp_strlcat(dst, src, dsize) dp__strlcat(dst, src, dsize, __func__, __LINE__)
+size_t dp__strlcpy(char *dst, const char *src, size_t dsize, const char *func, unsigned line);
+size_t dp__strlcat(char *dst, const char *src, size_t dsize, const char *func, unsigned line);
+char *dp_stpecpy(char *dst, char *end, const char *src);
+char *dp_ustr2stp(char *dst, size_t dsize, const char *src, size_t slen);
 
-#endif  // #ifndef HAVE_STRLCPY
 
 void FindFraction(double val, int *num, int *denom, int denomMax);
 

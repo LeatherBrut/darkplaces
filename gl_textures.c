@@ -928,19 +928,19 @@ static void GL_SetupTextureParameters(int flags, textype_t textype, int texturet
 static void R_UploadPartialTexture(gltexture_t *glt, const unsigned char *data, int fragx, int fragy, int fragz, int fragwidth, int fragheight, int fragdepth)
 {
 	if (data == NULL)
-		Sys_Error("R_UploadPartialTexture \"%s\": partial update with NULL pixels", glt->identifier);
+		Sys_Abort("R_UploadPartialTexture \"%s\": partial update with NULL pixels", glt->identifier);
 
 	if (glt->texturetype != GLTEXTURETYPE_2D)
-		Sys_Error("R_UploadPartialTexture \"%s\": partial update of type other than 2D", glt->identifier);
+		Sys_Abort("R_UploadPartialTexture \"%s\": partial update of type other than 2D", glt->identifier);
 
 	if (glt->textype->textype == TEXTYPE_PALETTE)
-		Sys_Error("R_UploadPartialTexture \"%s\": partial update of paletted texture", glt->identifier);
+		Sys_Abort("R_UploadPartialTexture \"%s\": partial update of paletted texture", glt->identifier);
 
 	if (glt->flags & (TEXF_MIPMAP | TEXF_PICMIP))
-		Sys_Error("R_UploadPartialTexture \"%s\": partial update not supported with MIPMAP or PICMIP flags", glt->identifier);
+		Sys_Abort("R_UploadPartialTexture \"%s\": partial update not supported with MIPMAP or PICMIP flags", glt->identifier);
 
 	if (glt->inputwidth != glt->tilewidth || glt->inputheight != glt->tileheight || glt->tiledepth != 1)
-		Sys_Error("R_UploadPartialTexture \"%s\": partial update not supported with stretched or special textures", glt->identifier);
+		Sys_Abort("R_UploadPartialTexture \"%s\": partial update not supported with stretched or special textures", glt->identifier);
 
 	// update a portion of the image
 
@@ -971,7 +971,7 @@ static void R_UploadFullTexture(gltexture_t *glt, const unsigned char *data)
 
 	// error out if a stretch is needed on special texture types
 	if (glt->texturetype != GLTEXTURETYPE_2D && (glt->tilewidth != glt->inputwidth || glt->tileheight != glt->inputheight || glt->tiledepth != glt->inputdepth))
-		Sys_Error("R_UploadFullTexture \"%s\": stretch uploads allowed only on 2D textures\n", glt->identifier);
+		Sys_Abort("R_UploadFullTexture \"%s\": stretch uploads allowed only on 2D textures\n", glt->identifier);
 
 	// when picmip or maxsize is applied, we scale up to a power of 2 multiple
 	// of the target size and then use the mipmap reduction function to get
@@ -1280,7 +1280,7 @@ static rtexture_t *R_SetupTexture(rtexturepool_t *rtexturepool, const char *iden
 		flags |= TEXF_ALPHA;
 		break;
 	default:
-		Sys_Error("R_LoadTexture: unknown texture type");
+		Sys_Abort("R_LoadTexture: unknown texture type");
 	}
 
 	texinfo2 = R_GetTexTypeInfo(textype, flags);
@@ -1291,7 +1291,7 @@ static rtexture_t *R_SetupTexture(rtexturepool_t *rtexturepool, const char *iden
 
 	glt = (gltexture_t *)Mem_ExpandableArray_AllocRecord(&texturearray);
 	if (identifier)
-		strlcpy (glt->identifier, identifier, sizeof(glt->identifier));
+		dp_strlcpy (glt->identifier, identifier, sizeof(glt->identifier));
 	glt->pool = pool;
 	glt->chain = pool->gltchain;
 	pool->gltchain = glt;
@@ -1382,7 +1382,7 @@ rtexture_t *R_LoadTextureRenderBuffer(rtexturepool_t *rtexturepool, const char *
 
 	glt = (gltexture_t *)Mem_ExpandableArray_AllocRecord(&texturearray);
 	if (identifier)
-		strlcpy (glt->identifier, identifier, sizeof(glt->identifier));
+		dp_strlcpy (glt->identifier, identifier, sizeof(glt->identifier));
 	glt->pool = pool;
 	glt->chain = pool->gltchain;
 	pool->gltchain = glt;
@@ -1686,7 +1686,7 @@ rtexture_t *R_LoadTextureDDSFile(rtexturepool_t *rtexturepool, const char *filen
 
 			texinfo = R_GetTexTypeInfo(textype, flags);
 
-			strlcpy (glt->identifier, vabuf, sizeof(glt->identifier));
+			dp_strlcpy(glt->identifier, vabuf, sizeof(glt->identifier));
 			glt->pool = pool;
 			glt->chain = pool->gltchain;
 			pool->gltchain = glt;
@@ -1969,7 +1969,8 @@ rtexture_t *R_LoadTextureDDSFile(rtexturepool_t *rtexturepool, const char *filen
 		unsigned char *p = mipnewpixels;
 		for (i = bytesperblock == 16 ? 8 : 0;i < (int)mipsize_total;i += bytesperblock, p += 4)
 		{
-			c = mippixels_start[i] + 256*mippixels_start[i+1] + 65536*mippixels_start[i+2] + 16777216*mippixels_start[i+3];
+			// UBSan: unsigned literals because promotion to int causes signed overflow when mippixels_start >= 128
+			c = mippixels_start[i] + 256u*mippixels_start[i+1] + 65536u*mippixels_start[i+2] + 16777216u*mippixels_start[i+3];
 			p[2] = (((c >> 11) & 0x1F) + ((c >> 27) & 0x1F)) * (0.5f / 31.0f * 255.0f);
 			p[1] = (((c >>  5) & 0x3F) + ((c >> 21) & 0x3F)) * (0.5f / 63.0f * 255.0f);
 			p[0] = (((c      ) & 0x1F) + ((c >> 16) & 0x1F)) * (0.5f / 31.0f * 255.0f);
@@ -2014,7 +2015,8 @@ rtexture_t *R_LoadTextureDDSFile(rtexturepool_t *rtexturepool, const char *filen
 		{
 			for (i = bytesperblock == 16 ? 8 : 0;i < mipsize;i += bytesperblock)
 			{
-				c = mippixels[i] + 256*mippixels[i+1] + 65536*mippixels[i+2] + 16777216*mippixels[i+3];
+				// UBSan: unsigned literals because promotion to int causes signed overflow when mippixels >= 128
+				c = mippixels[i] + 256u*mippixels[i+1] + 65536u*mippixels[i+2] + 16777216u*mippixels[i+3];
 				avgcolor[0] += ((c >> 11) & 0x1F) + ((c >> 27) & 0x1F);
 				avgcolor[1] += ((c >>  5) & 0x3F) + ((c >> 21) & 0x3F);
 				avgcolor[2] += ((c      ) & 0x1F) + ((c >> 16) & 0x1F);
@@ -2164,7 +2166,7 @@ rtexture_t *R_LoadTextureDDSFile(rtexturepool_t *rtexturepool, const char *filen
 	texinfo = R_GetTexTypeInfo(textype, flags);
 
 	glt = (gltexture_t *)Mem_ExpandableArray_AllocRecord(&texturearray);
-	strlcpy (glt->identifier, filename, sizeof(glt->identifier));
+	dp_strlcpy (glt->identifier, filename, sizeof(glt->identifier));
 	glt->pool = pool;
 	glt->chain = pool->gltchain;
 	pool->gltchain = glt;

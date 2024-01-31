@@ -108,7 +108,7 @@ static void GLAPIENTRY GL_DebugOutputCallback(GLenum source, GLenum type, GLuint
 }
 #endif
 
-#define BACKENDACTIVECHECK if (!gl_state.active) Sys_Error("GL backend function called when backend is not active");
+#define BACKENDACTIVECHECK if (!gl_state.active) Sys_Abort("GL backend function called when backend is not active");
 
 void SCR_ScreenShot_f(cmd_state_t *cmd);
 
@@ -1773,7 +1773,7 @@ r_meshbuffer_t *R_Mesh_CreateMeshBuffer(const void *data, size_t size, const cha
 	buffer->isuniformbuffer = isuniformbuffer;
 	buffer->isdynamic = isdynamic;
 	buffer->isindex16 = isindex16;
-	strlcpy(buffer->name, name, sizeof(buffer->name));
+	dp_strlcpy(buffer->name, name, sizeof(buffer->name));
 	R_Mesh_UpdateMeshBuffer(buffer, data, size, false, 0);
 	return buffer;
 }
@@ -1978,7 +1978,7 @@ void R_Mesh_TexCoordPointer(unsigned int unitnum, int components, int gltype, si
 {
 	gltextureunit_t *unit = gl_state.units + unitnum;
 	if (unitnum >= MAX_TEXTUREUNITS)
-		Sys_Error("R_Mesh_TexCoordPointer: unitnum %i > max units %i\n", unitnum, MAX_TEXTUREUNITS);
+		Sys_Abort("R_Mesh_TexCoordPointer: unitnum %i > max units %i\n", unitnum, MAX_TEXTUREUNITS);
 	// update array settings
 	// note: there is no need to check bufferobject here because all cases
 	// that involve a valid bufferobject also supply a texcoord array
@@ -2027,7 +2027,7 @@ int R_Mesh_TexBound(unsigned int unitnum, int id)
 {
 	gltextureunit_t *unit = gl_state.units + unitnum;
 	if (unitnum >= MAX_TEXTUREUNITS)
-		Sys_Error("R_Mesh_TexCoordPointer: unitnum %i > max units %i\n", unitnum, MAX_TEXTUREUNITS);
+		Sys_Abort("R_Mesh_TexCoordPointer: unitnum %i > max units %i\n", unitnum, MAX_TEXTUREUNITS);
 	if (id == GL_TEXTURE_2D)
 		return unit->t2d;
 	if (id == GL_TEXTURE_3D)
@@ -2068,7 +2068,7 @@ void R_Mesh_TexBind(unsigned int unitnum, rtexture_t *tex)
 	gltextureunit_t *unit = gl_state.units + unitnum;
 	int texnum;
 	if (unitnum >= MAX_TEXTUREUNITS)
-		Sys_Error("R_Mesh_TexBind: unitnum %i > max units %i\n", unitnum, MAX_TEXTUREUNITS);
+		Sys_Abort("R_Mesh_TexBind: unitnum %i > max units %i\n", unitnum, MAX_TEXTUREUNITS);
 	switch(vid.renderpath)
 	{
 	case RENDERPATH_GL32:
