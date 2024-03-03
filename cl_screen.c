@@ -738,7 +738,9 @@ SCR_DrawConsole
 void SCR_DrawConsole (void)
 {
 	// infobar and loading progress are not drawn simultaneously
-	scr_con_margin_bottom = SCR_InfobarHeight() ?: scr_loading * scr_loadingscreen_barheight.integer;
+	scr_con_margin_bottom = SCR_InfobarHeight();
+	if (!scr_con_margin_bottom && scr_loading)
+		scr_con_margin_bottom = scr_loadingscreen_barheight.integer;
 	if (key_consoleactive & KEY_CONSOLEACTIVE_FORCED)
 	{
 		// full screen
@@ -1680,7 +1682,7 @@ static void SCR_DrawScreen (void)
 
 		// if CSQC is loaded, it is required to provide the CSQC_UpdateView function,
 		// and won't render a view if it does not call that.
-		if (cl.csqc_loaded)
+		if (CLVM_prog->loaded)
 			CL_VM_UpdateView(r_stereo_side ? 0.0 : max(0.0, cl.time - cl.oldtime));
 		else
 		{

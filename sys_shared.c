@@ -382,7 +382,7 @@ double Sys_DirtyTime(void)
 		double old_benchmark_time = benchmark_time;
 		benchmark_time += 1;
 		if(benchmark_time == old_benchmark_time)
-			Sys_Abort("sys_usenoclockbutbenchmark cannot run any longer, sorry");
+			Sys_Error("sys_usenoclockbutbenchmark cannot run any longer, sorry");
 		return benchmark_time * 0.000001;
 	}
 #if HAVE_QUERYPERFORMANCECOUNTER
@@ -463,7 +463,7 @@ double Sys_DirtyTime(void)
 	}
 #else
 	// fallback for using the SDL timer if no other timer is available
-	// this calls Sys_Abort() if not linking against SDL
+	// this calls Sys_Error() if not linking against SDL
 	return (double) Sys_SDL_GetTicks() / 1000.0;
 #endif
 }
@@ -492,7 +492,7 @@ double Sys_Sleep(double time)
 		double old_benchmark_time = benchmark_time;
 		benchmark_time += microseconds;
 		if(benchmark_time == old_benchmark_time)
-			Sys_Abort("sys_usenoclockbutbenchmark cannot run any longer, sorry");
+			Sys_Error("sys_usenoclockbutbenchmark cannot run any longer, sorry");
 		return 0;
 	}
 
@@ -674,11 +674,14 @@ Startup and Shutdown
 ===============================================================================
 */
 
-void Sys_Abort (const char *error, ...)
+void Sys_Error (const char *error, ...)
 {
 	va_list argptr;
 	char string[MAX_INPUTLINE];
 	int i;
+
+	// Disable Sys_HandleSignal() but not Sys_HandleCrash()
+	host.state = host_shutdown;
 
 	// set output to blocking stderr
 	sys.outfd = fileno(stderr);
@@ -690,7 +693,7 @@ void Sys_Abort (const char *error, ...)
 	dpvsnprintf (string, sizeof (string), error, argptr);
 	va_end (argptr);
 
-	Con_Printf(CON_ERROR "Engine Abort: %s\n^9%s\n", string, engineversion);
+	Con_Printf(CON_ERROR "Engine Error - %s\n^9%s\n", string, engineversion);
 
 	dp_strlcat(string, "\n\n", sizeof(string));
 	dp_strlcat(string, engineversion, sizeof(string));
@@ -712,11 +715,10 @@ void Sys_Abort (const char *error, ...)
 	VID_Shutdown();
 	S_StopAllSounds();
 
-	host.state = host_failed; // make Sys_HandleSignal() call exit()
-	Sys_SDL_Dialog("Engine Abort", string);
+	host.state = host_failed; // make Sys_HandleSignal() call _Exit()
+	Sys_SDL_Dialog("Engine Error", string);
 
 	fflush(stderr);
-
 	exit (1);
 }
 
@@ -952,7 +954,14 @@ static void Sys_HandleCrash(int sig)
 	char **btstrings;
 #endif
 	char dialogtext[3072];
-	const char *sigdesc = Sys_SigDesc(sig);
+	const char *sigdesc;
+
+	// Break any loop and disable Sys_HandleSignal()
+	if (host.state == host_failing || host.state == host_failed)
+		return;
+	host.state = host_failing;
+
+	sigdesc = Sys_SigDesc(sig);
 
 	// set output to blocking stderr and print header, backtrace, version
 	sys.outfd = fileno(stderr); // not async-signal-safe :(
@@ -976,7 +985,7 @@ static void Sys_HandleCrash(int sig)
 	Sys_Print("\n", 1);
 #endif
 
-	// DP8 TODO: send a disconnect message indicating we crashed, see Sys_Abort() and Host_Error()
+	// DP8 TODO: send a disconnect message indicating we crashed, see Sys_Error() and Host_Error()
 
 	// don't want a dead window left blocking the OS UI or the crash dialog
 	VID_Shutdown();
@@ -1007,13 +1016,19 @@ static void Sys_HandleCrash(int sig)
 
 static void Sys_HandleSignal(int sig)
 {
-	const char *sigdesc = Sys_SigDesc(sig);
+	const char *sigdesc;
+
+	// Break any loop, eg if each Sys_Print triggers a SIGPIPE
+	if (host.state == host_shutdown || host.state == host_failing)
+		return;
+
+	sigdesc = Sys_SigDesc(sig);
 	Sys_Print("\nReceived ", 10);
 	Sys_Print(sigdesc, strlen(sigdesc));
 	Sys_Print(" signal, exiting...\n", 20);
 	if (host.state == host_failed)
 	{
-		// user is trying to kill the process while the dialog is open
+		// user is trying to kill the process while the SDL dialog is open
 		fflush(stderr); // not async-signal-safe :(
 		_Exit(sig);
 	}

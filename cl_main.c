@@ -257,7 +257,7 @@ void CL_SetInfo(const char *key, const char *value, qbool send, qbool allowstark
 			MSG_WriteByte(&cls.netcon->message, qw_clc_stringcmd);
 			MSG_WriteString(&cls.netcon->message, va(vabuf, sizeof(vabuf), "setinfo \"%s\" \"%s\"", key, value));
 		}
-		else if (!strcasecmp(key, "name"))
+		else if (!strcasecmp(key, "_cl_name") || !strcasecmp(key, "name"))
 		{
 			MSG_WriteByte(&cls.netcon->message, clc_stringcmd);
 			MSG_WriteString(&cls.netcon->message, va(vabuf, sizeof(vabuf), "name \"%s\"", value));
@@ -302,7 +302,7 @@ void CL_ExpandEntities(int num)
 	if (num >= cl.max_entities)
 	{
 		if (!cl.entities)
-			Sys_Abort("CL_ExpandEntities: cl.entities not initialized");
+			Sys_Error("CL_ExpandEntities: cl.entities not initialized");
 		if (num >= MAX_EDICTS)
 			Host_Error("CL_ExpandEntities: num %i >= %i", num, MAX_EDICTS);
 		oldmaxentities = cl.max_entities;
@@ -2091,7 +2091,7 @@ void CL_UpdateWorld(void)
 		CL_UpdateViewModel();
 
 		// when csqc is loaded, it will call this in CSQC_UpdateView
-		if (!cl.csqc_loaded)
+		if (!CLVM_prog->loaded)
 		{
 			// clear the CL_Mesh_Scene() used for some engine effects
 			CL_MeshEntities_Scene_Clear();

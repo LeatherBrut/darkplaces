@@ -3733,7 +3733,7 @@ r_meshbuffer_t *R_BufferData_Store(size_t datasize, const void *data, r_bufferda
 
 	// if the resize did not give us enough memory, fail
 	if (!r_bufferdata_buffer[r_bufferdata_cycle][type] || r_bufferdata_buffer[r_bufferdata_cycle][type]->current + padsize > r_bufferdata_buffer[r_bufferdata_cycle][type]->size)
-		Sys_Abort("R_BufferData_Store: failed to create a new buffer of sufficient size\n");
+		Sys_Error("R_BufferData_Store: failed to create a new buffer of sufficient size\n");
 
 	mem = r_bufferdata_buffer[r_bufferdata_cycle][type];
 	offset = (int)mem->current;
@@ -4379,18 +4379,10 @@ static void R_View_SetFrustum(const int *scissor)
 	//PlaneClassify(&frustum[4]);
 }
 
-static void R_View_UpdateWithScissor(const int *myscissor)
+static void R_View_Update(const int *myscissor)
 {
 	R_Main_ResizeViewCache();
 	R_View_SetFrustum(myscissor);
-	R_View_WorldVisibility(!r_refdef.view.usevieworiginculling);
-	R_View_UpdateEntityVisible();
-}
-
-static void R_View_Update(void)
-{
-	R_Main_ResizeViewCache();
-	R_View_SetFrustum(NULL);
 	R_View_WorldVisibility(!r_refdef.view.usevieworiginculling);
 	R_View_UpdateEntityVisible();
 }
@@ -4867,10 +4859,7 @@ static void R_Water_ProcessPlanes(int fbo, rtexture_t *depthtexture, rtexture_t 
 			GL_ScissorTest(false);
 			R_ClearScreen(r_refdef.fogenabled);
 			GL_ScissorTest(true);
-			if(r_water_scissormode.integer & 2)
-				R_View_UpdateWithScissor(myscissor);
-			else
-				R_View_Update();
+			R_View_Update(r_water_scissormode.integer & 2 ? myscissor : NULL);
 			R_AnimCache_CacheVisibleEntities();
 			if(r_water_scissormode.integer & 1)
 				GL_Scissor(myscissor[0], myscissor[1], myscissor[2], myscissor[3]);
@@ -4935,10 +4924,7 @@ static void R_Water_ProcessPlanes(int fbo, rtexture_t *depthtexture, rtexture_t 
 			GL_ScissorTest(false);
 			R_ClearScreen(r_refdef.fogenabled);
 			GL_ScissorTest(true);
-			if(r_water_scissormode.integer & 2)
-				R_View_UpdateWithScissor(myscissor);
-			else
-				R_View_Update();
+			R_View_Update(r_water_scissormode.integer & 2 ? myscissor : NULL);
 			R_AnimCache_CacheVisibleEntities();
 			if(r_water_scissormode.integer & 1)
 				GL_Scissor(myscissor[0], myscissor[1], myscissor[2], myscissor[3]);
@@ -4999,7 +4985,7 @@ static void R_Water_ProcessPlanes(int fbo, rtexture_t *depthtexture, rtexture_t 
 			GL_ScissorTest(false);
 			R_ClearScreen(r_refdef.fogenabled);
 			GL_ScissorTest(true);
-			R_View_Update();
+			R_View_Update(NULL);
 			R_AnimCache_CacheVisibleEntities();
 			R_RenderScene(rt->fbo, rt->depthtexture, rt->colortexture[0], 0, 0, rt->texturewidth, rt->textureheight);
 
@@ -5011,7 +4997,7 @@ static void R_Water_ProcessPlanes(int fbo, rtexture_t *depthtexture, rtexture_t 
 	r_fb.water.renderingscene = false;
 	r_refdef.view = originalview;
 	R_ResetViewRendering3D(fbo, depthtexture, colortexture, viewx, viewy, viewwidth, viewheight);
-	R_View_Update();
+	R_View_Update(NULL);
 	R_AnimCache_CacheVisibleEntities();
 	goto finish;
 error:
@@ -5782,7 +5768,7 @@ void R_RenderView(int fbo, rtexture_t *depthtexture, rtexture_t *colortexture, i
 
 	r_refdef.view.showdebug = true;
 
-	R_View_Update();
+	R_View_Update(NULL);
 	if (r_timereport_active)
 		R_TimeReport("visibility");
 
@@ -8549,7 +8535,7 @@ void RSurf_DrawBatch(void)
 				if (c >= rsurface.modelsurfaces[j].num_firstvertex && c < (rsurface.modelsurfaces[j].num_firstvertex + rsurface.modelsurfaces[j].num_vertices))
 				{
 					if (rsurface.modelsurfaces[j].texture != rsurface.texture)
-						Sys_Abort("RSurf_DrawBatch: index %i uses different texture (%s) than surface %i which it belongs to (which uses %s)\n", c, rsurface.texture->name, j, rsurface.modelsurfaces[j].texture->name);
+						Sys_Error("RSurf_DrawBatch: index %i uses different texture (%s) than surface %i which it belongs to (which uses %s)\n", c, rsurface.texture->name, j, rsurface.modelsurfaces[j].texture->name);
 					break;
 				}
 			}
