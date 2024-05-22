@@ -1,0 +1,2 @@
+CMAKE_MINIMUM_REQUIERED(3.20)
+project(SandyPlaces)
